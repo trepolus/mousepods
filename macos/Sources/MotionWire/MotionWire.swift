@@ -82,21 +82,28 @@ public enum HelperEvent: Equatable, Sendable {
     case status(HeadphoneStatus)
     case command(HotkeyCommand)
     case stem(StemPress)
+    case hand(HandEvent)
 }
 
 /// Messages from the controller back to the helper, sent to the helper's own UDP address.
 public enum HelperControl: Equatable, Sendable {
     /// Claim (true) or release (false) the Now Playing role that receives stem presses.
     case nowPlaying(Bool)
+    /// Run (true) or stop (false) the camera hand tracking.
+    case camera(Bool)
 
-    /// Parses `{"type": "control", "now_playing": true|false}`; nil for anything else.
+    /// Parses `{"type": "control", "now_playing" | "camera": true|false}`; nil for anything else.
     public static func parse(_ data: Data) -> HelperControl? {
         guard let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              object["type"] as? String == "control",
-              let flag = object["now_playing"] as? NSNumber,
-              CFGetTypeID(flag) == CFBooleanGetTypeID()
+              object["type"] as? String == "control"
         else { return nil }
-        return .nowPlaying(flag.boolValue)
+        func flag(_ key: String) -> Bool? {
+            guard let value = object[key] as? NSNumber, CFGetTypeID(value) == CFBooleanGetTypeID() else { return nil }
+            return value.boolValue
+        }
+        if let claim = flag("now_playing") { return .nowPlaying(claim) }
+        if let on = flag("camera") { return .camera(on) }
+        return nil
     }
 }
 
@@ -125,6 +132,12 @@ private struct StemDTO: Encodable {
     let press: String
 }
 
+private struct HandDTO: Encodable {
+    let type = "hand"
+    let event: String
+    let finger: String?
+}
+
 private extension Vector3 {
     var wire: [Double] { [x, y, z] }
 }
@@ -145,5 +158,13 @@ public func encodeLine(_ event: HelperEvent) -> Data {
         return try! encoder.encode(CommandDTO(command: command.rawValue))
     case .stem(let press):
         return try! encoder.encode(StemDTO(press: press.rawValue))
+    case .hand(let event):
+        let dto: HandDTO
+        switch event {
+        case .pinchDown(let finger): dto = HandDTO(event: "down", finger: finger.rawValue)
+        case .pinchUp(let finger): dto = HandDTO(event: "up", finger: finger.rawValue)
+        case .fist: dto = HandDTO(event: "fist", finger: nil)
+        }
+        return try! encoder.encode(dto)
     }
 }

@@ -159,3 +159,32 @@ struct StemDebouncerTests {
         #expect(d.accept(.single, at: 0.3) == .single)
     }
 }
+
+@Suite("Hand wire")
+struct HandWireTests {
+    @Test("pinch down and up name the finger", arguments: PinchFinger.allCases)
+    func pinch(finger: PinchFinger) throws {
+        let down = try decode(encodeLine(.hand(.pinchDown(finger))))
+        #expect(down["type"] as? String == "hand")
+        #expect(down["event"] as? String == "down")
+        #expect(down["finger"] as? String == finger.rawValue)
+        let up = try decode(encodeLine(.hand(.pinchUp(finger))))
+        #expect(up["event"] as? String == "up")
+    }
+
+    @Test("fist carries no finger")
+    func fist() throws {
+        let json = try decode(encodeLine(.hand(.fist)))
+        #expect(json["event"] as? String == "fist")
+        #expect(json["finger"] == nil)
+    }
+
+    @Test("controller can switch the camera", arguments: [
+        ("{\"type\":\"control\",\"camera\":true}", HelperControl?.some(.camera(true))),
+        ("{\"type\":\"control\",\"camera\":false}", HelperControl?.some(.camera(false))),
+        ("{\"type\":\"control\",\"camera\":\"on\"}", nil),
+    ] as [(String, HelperControl?)])
+    func camera(text: String, want: HelperControl?) {
+        #expect(HelperControl.parse(Data(text.utf8)) == want)
+    }
+}

@@ -16,6 +16,8 @@
 	<string>14.0</string>
 	<key>LSUIElement</key>
 	<true/>
+	<key>NSCameraUsageDescription</key>
+	<string>MousePods watches your hand for pinch gestures to click and drag (only while mouse control is on).</string>
 	<key>NSMotionUsageDescription</key>
 	<string>MousePods reads your AirPods head tracking to move the cursor.</string>
 </dict>

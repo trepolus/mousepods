@@ -258,10 +258,13 @@ for hotkey in hotkeys.register() {
 }
 
 let nowPlaying = NowPlaying(sender: sender)
+let hands = HandTracker(sender: sender)
 let control = ControlListener(fd: sender.fd) { message in
     switch message {
     case .nowPlaying(let claim):
         MainActor.assumeIsolated { nowPlaying.set(claim) }   // listener runs on the main queue
+    case .camera(let on):
+        hands.set(on)
     }
 }
 
