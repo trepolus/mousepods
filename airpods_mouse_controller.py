@@ -1372,15 +1372,21 @@ class Controller:
 
     def on_block(self, blk, now):
         ts, w, g = parse_block(blk, self.cfg["gyro_dps_per_lsb"])
+        self.on_sample(ts, w, g, parse_accel(blk), struct.unpack_from("<hhh", blk, 20), now)
+
+    def on_sample(self, ts, w, g, a, att, now):
+        """One motion sample from any source.
+
+        ts: sensor timestamp in ns, w: angular rate in °/s (body), g: gravity (body, ~1000 = 1 g),
+        a: user acceleration in m/s² (body), att: attitude quaternion vector part in Q15 (see quat_from_att).
+        """
         dt = (ts - self.last_ts) / 1e9 if self.last_ts else 0.0
         if not 0.0 < dt < 0.15:
             dt = min(max(now - self.last_sample, 0.001), 0.05) if self.last_sample else 0.01
         self.last_ts, self.last_sample = ts, now
         self.n += 1
-        a = parse_accel(blk)
         self.last_acc = a
         yaw, pitch, roll = self.engine.step(w, g, dt)
-        att = struct.unpack_from("<hhh", blk, 20)
         ot = self.opentrack          # one reference: a web thread may stop it meanwhile
         if ot:                       # OpenTrack / manette : alimentés même souris en pause
             p = self.engine.p
@@ -1404,7 +1410,7 @@ class Controller:
         if len(self.sample_times) > 1200:
             del self.sample_times[:200]
         if self.cfg["mode"] == "glisse":
-            q = quat_from_att(struct.unpack_from("<hhh", blk, 20))
+            q = quat_from_att(att)
             self.on_glide(vsub(w, self.engine.bias), g, a, dt, now, q)
         else:
             self.on_rates(yaw, pitch, roll, dt, now)
