@@ -136,6 +136,7 @@ class CGRect(ctypes.Structure):
 
 MOUSE_MOVED = 5
 BUTTON_EVENTS = {"left": (1, 2, 0), "right": (3, 4, 1), "middle": (25, 26, 2)}   # down, up, CGMouseButton
+DRAG_EVENTS = {"left": 6, "right": 7, "middle": 27}          # moves while that button is held
 HID_EVENT_TAP = 0
 SCROLL_UNIT_LINE = 1
 
@@ -200,6 +201,10 @@ class CoreGraphics:
         down_type, up_type, number = BUTTON_EVENTS[button]
         self._post(self.cg.CGEventCreateMouseEvent(None, down_type if down else up_type, CGPoint(*point), number))
 
+    def drag(self, point, button):
+        number = BUTTON_EVENTS[button][2]
+        self._post(self.cg.CGEventCreateMouseEvent(None, DRAG_EVENTS[button], CGPoint(*point), number))
+
     def scroll(self, lines):
         self._post(self.cg.CGEventCreateScrollWheelEvent2(None, SCROLL_UNIT_LINE, 1, lines, 0, 0))
 
@@ -220,6 +225,7 @@ class MacPointer:
         self._math = CursorMath()
         self._scroll = ScrollMath()
         self._history = CursorHistory()
+        self._held = []            # buttons held down by press(), oldest first
         self._displays = self.cg.displays()
         self._displays_at = clock()
         if not self.cg.trusted():
@@ -239,7 +245,10 @@ class MacPointer:
         last = self._history.last_time
         if last is None or now - last > self.HELD_S:
             self._history.record(now - 0.001, before)      # where it rested until now
-        self.cg.move(point)
+        if self._held:
+            self.cg.drag(point, self._held[0])          # apps only see a drag with drag events
+        else:
+            self.cg.move(point)
         self._history.record(now, point)
 
     def move_rel(self, dx, dy):
@@ -266,10 +275,30 @@ class MacPointer:
         self._sleep(0.015)
         self.cg.button(button, False, point)
 
+    def press(self, button="left"):
+        """Hold a button down (camera pinch); moves become drags until release()."""
+        if button not in self._held:
+            self._held.append(button)
+            self.cg.button(button, True, self.cg.cursor())
+
+    def release(self, button="left"):
+        if button in self._held:
+            self._held.remove(button)
+            self.cg.button(button, False, self.cg.cursor())
+
+    def release_all(self):
+        """Never leave a button stuck down (pause, hand lost, shutdown)."""
+        for button in list(self._held):
+            self.release(button)
+
+    @property
+    def holding(self):
+        return bool(self._held)
+
     def scroll(self, lines):
         n = self._scroll.lines(lines)
         if n:
             self.cg.scroll(n)
 
     def close(self):
-        pass
+        self.release_all()

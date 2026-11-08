@@ -123,6 +123,10 @@ class FakeCoreGraphics:
     def button(self, button, down, point):
         self.calls.append(("button", button, down, point))
 
+    def drag(self, point, button):
+        self.calls.append(("drag", button, point))
+        self.position = point
+
     def scroll(self, lines):
         self.calls.append(("scroll", lines))
 
@@ -153,6 +157,32 @@ class MacPointerTests(unittest.TestCase):
         p.move_rel(10, 0)
         p.click("left")
         self.assertEqual(cg.calls[-2:], [("button", "left", True, (310, 200)), ("button", "left", False, (310, 200))])
+
+    def test_moves_while_a_button_is_held_are_drags(self):
+        cg = FakeCoreGraphics(cursor=(100, 100))
+        p = mp.MacPointer(backend=cg, sleep=lambda s: None, clock=lambda: 1.0)
+        p.press("left")
+        p.move_rel(5, 0)
+        p.release("left")
+        p.move_rel(5, 0)
+        self.assertEqual(cg.calls, [("button", "left", True, (100, 100)), ("drag", "left", (105, 100)),
+                                    ("button", "left", False, (105, 100)), ("move", (110, 100))])
+
+    def test_press_twice_and_release_unpressed_are_ignored(self):
+        cg = FakeCoreGraphics(cursor=(1, 1))
+        p = mp.MacPointer(backend=cg, sleep=lambda s: None, clock=lambda: 1.0)
+        p.release("left")
+        p.press("left")
+        p.press("left")
+        self.assertEqual(cg.calls, [("button", "left", True, (1, 1))])
+
+    def test_release_all_lets_go_of_every_held_button(self):
+        cg = FakeCoreGraphics(cursor=(1, 1))
+        p = mp.MacPointer(backend=cg, sleep=lambda s: None, clock=lambda: 1.0)
+        p.press("left")
+        p.release_all()
+        p.release_all()
+        self.assertEqual(cg.calls, [("button", "left", True, (1, 1)), ("button", "left", False, (1, 1))])
 
     def test_click_presses_and_releases_where_the_cursor_is(self):
         cg = FakeCoreGraphics(cursor=(42, 24))
