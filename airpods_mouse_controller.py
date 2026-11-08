@@ -1757,6 +1757,7 @@ def run_macos(ctl, web, ctrl, cfg):
         next_frame = time.monotonic()
         next_reload = time.monotonic() + 1.0
         now_playing = macos_motion.NowPlayingSync()
+        stalled_since = None
         RECEIVING = "receiving"
         last_status = None
         warned_silent = False
@@ -1768,6 +1769,9 @@ def run_macos(ctl, web, ctrl, cfg):
                 event = source.receive()
                 if isinstance(event, macos_motion.MotionSample):
                     e = macos_motion.to_engine(event)
+                    if stalled_since is not None:
+                        log.info("Motion samples back after %.1f s", now - stalled_since)
+                        stalled_since = None
                     ctl.last_ht = now
                     if ctl.place != "ear":
                         ctl.set_place("ear")      # CoreMotion only streams while the buds are worn
@@ -1796,6 +1800,9 @@ def run_macos(ctl, web, ctrl, cfg):
                 web.process_queue()
             if ctrl in r:
                 ctl.command(ctrl.recv(256).decode(errors="ignore"))
+            if last_status is RECEIVING and stalled_since is None and now - ctl.last_ht > 1.0:
+                stalled_since = ctl.last_ht
+                log.warning("Motion samples stopped (last one %.1f s ago)", now - ctl.last_ht)
             if not warned_silent and last_status is not RECEIVING and now - started > 5:
                 warned_silent = True
                 log.warning("No motion samples from the CoreMotion helper after 5 s: are both AirPods worn? "
