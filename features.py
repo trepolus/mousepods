@@ -41,6 +41,11 @@ SEND_WORDS = ("pause", "resume", "toggle", "recenter", "quit")
 
 
 @dataclass(frozen=True)
+class Menu:
+    """The interactive overview (menu_tui.py)."""
+
+
+@dataclass(frozen=True)
 class Invalid:
     message: str
 
@@ -53,6 +58,8 @@ def parse(argv):
     """Toggle | Status | Send | Invalid, or None when argv is for the normal options."""
     if len(argv) == 1 and argv[0] in SEND_WORDS:
         return Send(argv[0])
+    if argv == ["menu"]:
+        return Menu()
     if not argv or argv[0] not in ("on", "off", "status"):
         return None
     if argv[0] == "status":
@@ -84,3 +91,44 @@ def status_lines(cfg):
                  "mouse control (Control+Option+P or mousepods --send toggle)")
     lines.append(f"{'mode':6s}  {cfg.get('mode', '?'):7s} souris = mouse, pointeur = pointer (Control+Option+M)")
     return lines
+
+
+# --------------------------------------------------------------------------- interactive menu (menu_tui.py)
+@dataclass(frozen=True)
+class Row:
+    key: str
+    state: object          # "on" | "off" | a mode name | None for an action
+    description: str
+
+
+@dataclass(frozen=True)
+class ConfigUpdate:
+    updates: dict
+
+
+MODES = ("souris", "pointeur")       # glide ("glisse") is experimental: reachable with Control+Option+M
+
+
+def menu_rows(cfg):
+    rows = [Row("mouse", "off" if cfg.get("mouse_paused") else "on", "mouse control (Control+Option+P)")]
+    for name, feature in FEATURES.items():
+        section, key = feature.path
+        rows.append(Row(name, "on" if cfg.get(section, {}).get(key) else "off", feature.description))
+    rows.append(Row("mode", cfg.get("mode", "souris"), "souris = mouse, pointeur = pointer (aim at the screen)"))
+    rows.append(Row("recenter", None, "cursor back to the middle (Control+Option+C)"))
+    return rows
+
+
+def activate(key, cfg, running):
+    """What Enter/Space on a row does: ConfigUpdate | Send | None."""
+    if key == "mouse":
+        return Send("toggle") if running else ConfigUpdate({"mouse_paused": not cfg.get("mouse_paused")})
+    if key in FEATURES:
+        section, flag = FEATURES[key].path
+        return ConfigUpdate({section: {flag: not cfg.get(section, {}).get(flag)}})
+    if key == "mode":
+        current = cfg.get("mode")
+        return ConfigUpdate({"mode": MODES[(MODES.index(current) + 1) % len(MODES)] if current in MODES else MODES[0]})
+    if key == "recenter":
+        return Send("recenter") if running else None
+    return None

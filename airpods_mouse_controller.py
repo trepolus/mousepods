@@ -23,6 +23,7 @@ Usage:
   mousepods --sim-joystick         also create a virtual "head" joystick (native Linux games), see docs/SIMS.md
   mousepods --send CMD             recenter|toggle|pause|resume|scroll|mode|quit
   mousepods pause|resume|toggle|recenter|quit   short for --send ...
+  mousepods menu                   interactive overview: arrow keys/Tab to move, Space to switch on/off
   mousepods status                 what is on: hands, stem, dwell, tilt, mouse, mode
   mousepods on|off FEATURE...      switch hands|stem|dwell|tilt on or off (applies live, no restart)
   mousepods --install-hotkeys      GNOME shortcuts (Ctrl+Alt+C/P/S/M); on macOS the helper registers Ctrl+Option+C/P/S/M
@@ -2259,6 +2260,22 @@ def feature_command(cmd, cfg_path):
         return 2
     if isinstance(cmd, features.Send):
         return send_command(cmd.command)
+    if isinstance(cmd, features.Menu):
+        import menu_tui
+
+        def send_quiet(command):
+            s = socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM)
+            try:
+                s.sendto(command.encode(), CTRL_SOCK)
+                return True
+            except OSError:
+                return False
+            finally:
+                s.close()
+
+        menu_tui.run(lambda: load_config(cfg_path), lambda upd: update_config_file(cfg_path, upd), send_quiet,
+                     lambda: os.path.exists(CTRL_SOCK))
+        return 0
     if isinstance(cmd, features.Status):
         running = os.path.exists(CTRL_SOCK)
         print(f"MousePods is {'running' if running else 'not running'}  (config: {cfg_path})")

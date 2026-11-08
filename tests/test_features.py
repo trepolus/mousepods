@@ -15,6 +15,7 @@ class ParseTests(unittest.TestCase):
             (["on", "hands"], f.Toggle(True, ("hands",))),
             (["off", "dwell", "tilt"], f.Toggle(False, ("dwell", "tilt"))),
             (["status"], f.Status()),
+            (["menu"], f.Menu()),
         ]
         for argv, want in cases:
             self.assertEqual(f.parse(argv), want, argv)
@@ -65,6 +66,37 @@ class StatusTests(unittest.TestCase):
         self.assertIn("on", lines[2].split()[1])
         self.assertEqual(lines[4].split()[1], "paused")
         self.assertEqual(lines[0].split()[1], "off")
+
+
+class MenuTests(unittest.TestCase):
+    def cfg(self, **over):
+        cfg = m.load_config("/nonexistent.json")
+        cfg.update(over)
+        return cfg
+
+    def test_menu_lists_mouse_features_mode_and_recenter(self):
+        rows = f.menu_rows(self.cfg(mouse_paused=False))
+        self.assertEqual([r.key for r in rows], ["mouse", "hands", "stem", "dwell", "tilt", "mode", "recenter"])
+        self.assertEqual(rows[0].state, "on")
+        self.assertEqual(rows[5].state, "souris")
+
+    def test_enter_does_the_right_thing_for_each_row(self):
+        cfg = self.cfg(mouse_paused=False)
+        cases = [
+            ("mouse while running is paused live", "mouse", True, f.Send("toggle")),
+            ("mouse while stopped is remembered", "mouse", False, f.ConfigUpdate({"mouse_paused": True})),
+            ("feature flips its setting", "hands", True, f.ConfigUpdate({"hands": {"enabled": True}})),
+            ("stem on turns off", "stem", True, f.ConfigUpdate({"stem": {"enabled": False}})),
+            ("mode goes to pointer", "mode", True, f.ConfigUpdate({"mode": "pointeur"})),
+            ("recenter while running", "recenter", True, f.Send("recenter")),
+            ("recenter while stopped does nothing", "recenter", False, None),
+        ]
+        for name, key, running, want in cases:
+            self.assertEqual(f.activate(key, cfg, running), want, name)
+
+    def test_mode_from_pointer_or_glide_goes_back_to_mouse(self):
+        for mode in ("pointeur", "glisse"):
+            self.assertEqual(f.activate("mode", self.cfg(mode=mode), True), f.ConfigUpdate({"mode": "souris"}), mode)
 
 
 if __name__ == "__main__":
