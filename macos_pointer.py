@@ -40,6 +40,22 @@ def keep_on_displays(target, current, displays):
     return clamp_to_rect(target, home)
 
 
+def nearest_on_displays(point, displays):
+    """Point itself if it lies on a display, else the closest point on any display."""
+    if any(inside(point, d) for d in displays):
+        return point
+    candidates = [clamp_to_rect(point, d) for d in displays]
+    return min(candidates, key=lambda c: (c[0] - point[0]) ** 2 + (c[1] - point[1]) ** 2)
+
+
+def bounding_box(displays):
+    left = min(d[0] for d in displays)
+    top = min(d[1] for d in displays)
+    right = max(d[0] + d[2] for d in displays)
+    bottom = max(d[1] + d[3] for d in displays)
+    return (left, top, right - left, bottom - top)
+
+
 class CursorMath:
     """Turns move_rel / move_abs calls into whole-pixel cursor positions, or None when nothing moves."""
 
@@ -58,10 +74,11 @@ class CursorMath:
         self._last_abs = None
         return keep_on_displays((current[0] + ix, current[1] + iy), current, displays)
 
-    def absolute(self, fx, fy, display):
-        """fx, fy in 0..1 on the given display (the main one for pointer mode)."""
-        x, y, w, h = display
+    def absolute(self, fx, fy, displays):
+        """fx, fy in 0..1 across one canvas spanning all displays (as uinput does on Linux)."""
+        x, y, w, h = bounding_box(displays)
         point = (x + round(min(max(fx, 0.0), 1.0) * (w - 1)), y + round(min(max(fy, 0.0), 1.0) * (h - 1)))
+        point = nearest_on_displays(point, displays)
         if point == self._last_abs:
             return None
         self._last_abs = point
@@ -170,22 +187,33 @@ ACCESSIBILITY_HINT = ("Accessibility permission missing: the cursor will not mov
 class MacPointer:
     """Drop-in for Pointer (move_rel, move_abs, click, scroll, close) on macOS."""
 
-    def __init__(self, backend=None, sleep=time.sleep):
+    DISPLAY_REFRESH_S = 1.0     # pick up a monitor plugged in or out
+
+    def __init__(self, backend=None, sleep=time.sleep, clock=time.monotonic):
         self.cg = backend or CoreGraphics()
         self._sleep = sleep
+        self._clock = clock
         self._math = CursorMath()
         self._scroll = ScrollMath()
         self._displays = self.cg.displays()
+        self._displays_at = clock()
         if not self.cg.trusted():
             log.warning("%s", ACCESSIBILITY_HINT)
 
+    def displays(self):
+        now = self._clock()
+        if now - self._displays_at >= self.DISPLAY_REFRESH_S:
+            self._displays = self.cg.displays()
+            self._displays_at = now
+        return self._displays
+
     def move_rel(self, dx, dy):
-        point = self._math.relative(self.cg.cursor(), dx, dy, self._displays)
+        point = self._math.relative(self.cg.cursor(), dx, dy, self.displays())
         if point is not None:
             self.cg.move(point)
 
     def move_abs(self, fx, fy):
-        point = self._math.absolute(fx, fy, self.cg.main_display())
+        point = self._math.absolute(fx, fy, self.displays())
         if point is not None:
             self.cg.move(point)
 
