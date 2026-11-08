@@ -126,5 +126,88 @@ class MacMotionSourceTests(unittest.TestCase):
         self.assertIsNone(self.source.receive())
 
 
+CAPTURE = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "captures",
+                       "coremotion_guided.json")
+
+
+class CoreMotionReplayTests(unittest.TestCase):
+    """Guided capture from AirPods Pro 2 through CoreMotion (macOS 15), replayed through the real engine.
+
+    Routine: still, turn (left first), still, nod (down first), still, tilt (left shoulder first), still.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        with open(CAPTURE) as f:
+            capture = json.load(f)
+        engine = m.MotionEngine(m.DEFAULTS["bias"], mm.DEFAULT_PROFILE)
+        cls.cues = [cue for cue, _ in capture["routine"]]
+        cls.rates = {i: [] for i in range(len(cls.cues))}
+        last = None
+        for event in capture["events"]:
+            sample = mm.parse_datagram(json.dumps(event["msg"]).encode())
+            if not isinstance(sample, mm.MotionSample):
+                continue
+            e = mm.to_engine(sample)
+            dt = (e.ts_ns - last) / 1e9 if last else 0.04
+            last = e.ts_ns
+            cls.rates[event["cue"]].append(engine.step(e.w_dps, e.g, dt))
+
+    def rms(self, cue):
+        rows = self.rates[self.cues.index(cue)]
+        return [math.sqrt(sum(r[k] ** 2 for r in rows) / len(rows)) for k in range(3)]
+
+    def first_big(self, cue, axis):
+        return next(r[axis] for r in self.rates[self.cues.index(cue)] if abs(r[axis]) > 20)
+
+    def test_each_head_movement_lands_on_its_own_axis(self):
+        yaw, pitch, roll = self.rms("turn left-right-left-right, slowly")
+        self.assertGreater(yaw, 3 * max(pitch, roll), "turn")
+        yaw, pitch, roll = self.rms("nod down-up-down-up, slowly")
+        self.assertGreater(pitch, 3 * max(yaw, roll), "nod")
+        # Tilting a head pitched forward partly turns it around the vertical, so yaw takes a share.
+        yaw, pitch, roll = self.rms("tilt ear to left shoulder, then right, twice")
+        self.assertGreater(roll, 2 * pitch, "tilt")
+        self.assertGreater(roll, 15, "tilt")
+
+    def test_directions_follow_the_calibration_convention(self):
+        # profile_from_calibration: left = negative yaw, up = positive pitch, right = positive roll.
+        self.assertLess(self.first_big("turn left-right-left-right, slowly", 0), 0, "left turn")
+        self.assertLess(self.first_big("nod down-up-down-up, slowly", 1), 0, "nod down")
+        self.assertLess(self.first_big("tilt ear to left shoulder, then right, twice", 2), 0, "tilt left")
+
+    def test_holding_still_stays_quiet(self):
+        for name in ("hold still, look straight ahead", "hold still"):
+            self.assertLess(max(self.rms(name)), 12, name)
+
+
+class GuidedRecordTests(unittest.TestCase):
+    def test_capture_tags_each_datagram_with_its_cue(self):
+        app_dir = tempfile.mkdtemp()
+        out_path = os.path.join(app_dir, "capture.json")
+
+        def fake_helper(cmd, check):
+            port = int(cmd[cmd.index("--port") + 1])
+            with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+                s.sendto(wire({"type": "status", "status": "connected"}), ("127.0.0.1", port))
+                s.sendto(wire(SAMPLE), ("127.0.0.1", port))
+                s.sendto(b"not json", ("127.0.0.1", port))
+
+        source = mm.MacMotionSource(app_path=app_dir, launcher=fake_helper)
+        lines = []
+        ticks = iter(i * 0.01 for i in range(10_000))   # own clock: other tests swap time.monotonic
+        mm.record(out_path, routine=(("hold still", 0.2), ("turn", 0.05)), source=source,
+                  clock=lambda: next(ticks), out=lines.append)
+        with open(out_path) as f:
+            saved = json.load(f)
+        os.remove(out_path)
+        os.rmdir(app_dir)
+        self.assertEqual(saved["routine"], [["hold still", 0.2], ["turn", 0.05]])
+        self.assertEqual([(e["cue"], e["msg"]["type"]) for e in saved["events"]], [(0, "status"), (0, "sample")])
+        self.assertEqual([line for line in lines if line.startswith(">>> ") and "s)" in line],
+                         [">>> hold still (0.2 s)", ">>> turn (0.05 s)"])
+        self.assertIn("1 samples saved", lines[-1])
+
+
 if __name__ == "__main__":
     unittest.main()

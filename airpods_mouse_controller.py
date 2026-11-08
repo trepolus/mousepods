@@ -141,6 +141,14 @@ DEFAULT_PROFILE = {"yaw_sign": 1, "lat": [0.0, 0.0, 1.0], "pitch_sign": 1, "roll
 SOURCE_NAMES = {"head": "calib.source.head", "case": "calib.source.case", "hand": "calib.source.hand"}  # keys
 
 
+def default_profile(pid):
+    """Uncalibrated profile: CoreMotion (macOS) has a fixed head frame, the raw AirPods stream does not."""
+    if pid == "coremotion":
+        import macos_motion
+        return macos_motion.DEFAULT_PROFILE
+    return DEFAULT_PROFILE
+
+
 def deep_merge(base, over):
     for k, v in over.items():
         if k.startswith("_"):
@@ -1054,7 +1062,7 @@ class Controller:
         if prof is None or "lat" not in prof:
             log.warning("Profil %s non calibré : lance --calibrate dans cette position",
                         self.profile_key())
-            prof = DEFAULT_PROFILE
+            prof = default_profile(self.pid)
         self.engine.set_profile(prof)
 
     def set_device(self, pid):
@@ -1727,7 +1735,7 @@ def run_macos(ctl, web, ctrl, cfg):
     try:
         source.start()
         log.info("macOS: CoreMotion helper started (UDP 127.0.0.1:%d)", source.port)
-        ctl.set_device("coremotion")
+        ctl.set_device(macos_motion.DEVICE_ID)
         frame = 1.0 / max(int(cfg["render_hz"]), 10)
         next_frame = time.monotonic()
         next_reload = time.monotonic() + 1.0

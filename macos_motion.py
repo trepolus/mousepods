@@ -20,6 +20,11 @@ from dataclasses import dataclass
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 DEFAULT_APP = os.path.join(HERE, "macos", "build", "MousePodsMotion.app")
+DEVICE_ID = "coremotion"          # Controller.set_device id; profiles are stored as coremotion_<source>
+# CoreMotion reports every model in one head frame: x = ear to ear (nod), y = forward (tilt), z = up (turn).
+# Signs follow profile_from_calibration (left = negative yaw, up = positive pitch, right = positive roll);
+# derived from captures/coremotion_guided.json and guarded by tests/test_macos_motion.py.
+DEFAULT_PROFILE = {"yaw_sign": 1, "lat": [1.0, 0.0, 0.0], "pitch_sign": 1, "roll_sign": -1}
 GRAVITY_UNITS_PER_G = 1000.0      # raw AirPods stream: ~1000 = 1 g (see parse_block)
 STANDARD_GRAVITY = 9.81           # m/s² per g, as in parse_accel
 
@@ -141,3 +146,73 @@ class MacMotionSource:
 
     def close(self):
         self.sock.close()
+
+
+# --------------------------------------------------------------------------- guided capture
+# Each step: (cue shown to the wearer, seconds). Used to learn the CoreMotion axis frame.
+GUIDED_ROUTINE = (
+    ("hold still, look straight ahead", 8),
+    ("turn left-right-left-right, slowly", 8),
+    ("hold still", 4),
+    ("nod down-up-down-up, slowly", 8),
+    ("hold still", 4),
+    ("tilt ear to left shoulder, then right, twice", 8),
+    ("hold still", 4),
+)
+
+
+def record(path, routine=GUIDED_ROUTINE, source=None, clock=None, out=print):
+    """Run the guided routine and save every helper datagram, tagged with the active cue, as JSON.
+
+    File: {"source": "coremotion", "routine": [[cue, s], ...],
+           "events": [{"t_recv": s, "cue": i, "msg": <datagram object>}, ...]}
+    """
+    import select
+    import time
+    clock = clock or time.monotonic
+    source = source or MacMotionSource()
+    events = []
+    try:
+        source.start()
+        out("Recording. Follow the cues; keep your shoulders still.")
+        t0 = clock()
+        for index, (cue, seconds) in enumerate(routine):
+            out(f">>> {cue} ({seconds} s)")
+            end = clock() + seconds
+            while (left := end - clock()) > 0:
+                r, _, _ = select.select([source.sock], [], [], left)
+                if r:
+                    data = source.sock.recv(4096)
+                    try:
+                        msg = json.loads(data)
+                    except ValueError:
+                        continue
+                    events.append({"t_recv": round(clock() - t0, 4), "cue": index, "msg": msg})
+    finally:
+        source.close()
+    with open(path, "w") as f:
+        json.dump({"source": "coremotion", "routine": [list(step) for step in routine], "events": events}, f)
+    samples = sum(1 for e in events if e["msg"].get("type") == "sample")
+    out(f">>> done: {samples} samples saved to {path}")
+    return events
+
+
+def main(argv=None):
+    import argparse
+    import time
+    ap = argparse.ArgumentParser(
+        prog="python -m macos_motion",
+        description="macOS CoreMotion motion source tools. Needs the helper app built with macos/build.sh.")
+    sub = ap.add_subparsers(dest="command", required=True)
+    rec = sub.add_parser("record", help="guided ~44 s capture of the raw CoreMotion stream to a JSON file")
+    rec.add_argument("path", nargs="?", default=os.path.join(
+        HERE, "captures", "private", time.strftime("coremotion_guided_%Y%m%d_%H%M%S.json")),
+        help="output file (default: captures/private/coremotion_guided_<time>.json)")
+    args = ap.parse_args(argv)
+    if args.command == "record":
+        os.makedirs(os.path.dirname(os.path.abspath(args.path)), exist_ok=True)
+        record(args.path)
+
+
+if __name__ == "__main__":
+    main()
