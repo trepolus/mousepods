@@ -1765,6 +1765,9 @@ def run_macos(ctl, web, ctrl, cfg):
                     if web and last_status is not RECEIVING:
                         web.set_status(tr("srv.status.receiving"))
                     last_status = RECEIVING
+                elif isinstance(event, macos_motion.HotkeyCommand):
+                    log.info("Shortcut: %s", event.value)
+                    ctl.command(event.value)
                 elif isinstance(event, macos_motion.HeadphoneStatus) and event != last_status:
                     last_status = event
                     text = MAC_STATUS_TEXT[event.value]

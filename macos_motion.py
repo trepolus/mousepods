@@ -9,6 +9,7 @@ converts them to the units the motion engine uses for the raw AirPods stream.
 Wire format (frozen, mirrored by macos/Sources/MotionWire):
   {"type": "sample", "t": s, "rate": [rad/s]*3, "gravity": [g]*3, "accel": [g]*3, "quat": [w, x, y, z]}
   {"type": "status", "status": "connected" | "disconnected" | "unavailable" | "denied"}
+  {"type": "command", "command": "recenter" | "toggle" | "scroll" | "mode"}   (global shortcuts)
 """
 import enum
 import json
@@ -34,6 +35,14 @@ class HeadphoneStatus(enum.Enum):
     DISCONNECTED = "disconnected"
     UNAVAILABLE = "unavailable"
     DENIED = "denied"
+
+
+class HotkeyCommand(enum.Enum):
+    """System-wide shortcuts registered by the helper (Control+Option+C/P/S/M); values are --send commands."""
+    RECENTER = "recenter"
+    TOGGLE = "toggle"
+    SCROLL = "scroll"
+    MODE = "mode"
 
 
 @dataclass(frozen=True)
@@ -65,7 +74,7 @@ def _vector(value, size):
 
 
 def parse_datagram(data):
-    """Datagram bytes -> MotionSample | HeadphoneStatus, or None for anything malformed or unknown."""
+    """Datagram bytes -> MotionSample | HeadphoneStatus | HotkeyCommand, or None if malformed or unknown."""
     try:
         obj = json.loads(data)
     except (ValueError, UnicodeDecodeError):
@@ -76,6 +85,11 @@ def parse_datagram(data):
     if kind == "status":
         try:
             return HeadphoneStatus(obj.get("status"))
+        except ValueError:
+            return None
+    if kind == "command":
+        try:
+            return HotkeyCommand(obj.get("command"))
         except ValueError:
             return None
     if kind == "sample":
@@ -140,7 +154,7 @@ class MacMotionSource:
         self._launcher(self.launch_command(), check=True)
 
     def receive(self):
-        """Read one datagram: MotionSample | HeadphoneStatus | None (malformed, dropped)."""
+        """Read one datagram: MotionSample | HeadphoneStatus | HotkeyCommand | None (malformed, dropped)."""
         data = self.sock.recv(4096)
         return parse_datagram(data)
 

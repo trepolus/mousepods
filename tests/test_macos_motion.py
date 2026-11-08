@@ -35,6 +35,15 @@ class ParseDatagramTests(unittest.TestCase):
             self.assertEqual(mm.parse_datagram(wire({"type": "status", "status": name})),
                              mm.HeadphoneStatus(name), name)
 
+    def test_hotkey_commands_are_understood(self):
+        for name in ("recenter", "toggle", "scroll", "mode"):
+            self.assertEqual(mm.parse_datagram(wire({"type": "command", "command": name})),
+                             mm.HotkeyCommand(name), name)
+
+    def test_hotkey_commands_are_ones_the_controller_accepts(self):
+        accepted = {cmd for _, _, _, cmd in m.HOTKEYS}
+        self.assertEqual({c.value for c in mm.HotkeyCommand}, accepted)
+
     def test_malformed_datagrams_are_dropped(self):
         cases = {
             "not json": b"{nope",
@@ -42,6 +51,7 @@ class ParseDatagramTests(unittest.TestCase):
             "json list": wire([1, 2]),
             "unknown type": wire({"type": "battery"}),
             "unknown status": wire({"type": "status", "status": "sleeping"}),
+            "unknown command": wire({"type": "command", "command": "quit"}),
             "missing gravity": wire({k: v for k, v in SAMPLE.items() if k != "gravity"}),
             "short rate": wire(with_field(rate=[1.0, 2.0])),
             "three-part quaternion": wire(with_field(quat=[1.0, 0.0, 0.0])),

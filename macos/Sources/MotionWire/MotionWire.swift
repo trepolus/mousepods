@@ -62,9 +62,18 @@ public enum HeadphoneStatus: String, Sendable, CaseIterable {
     case denied
 }
 
+/// Commands the controller already accepts from `mousepods --send`; raw values are the command names.
+public enum HotkeyCommand: String, Sendable, CaseIterable {
+    case recenter
+    case toggle
+    case scroll
+    case mode
+}
+
 public enum HelperEvent: Equatable, Sendable {
     case sample(MotionSample)
     case status(HeadphoneStatus)
+    case command(HotkeyCommand)
 }
 
 /// Frozen wire DTOs: field names are the contract with macos_motion.py.
@@ -80,6 +89,11 @@ private struct SampleDTO: Encodable {
 private struct StatusDTO: Encodable {
     let type = "status"
     let status: String
+}
+
+private struct CommandDTO: Encodable {
+    let type = "command"
+    let command: String
 }
 
 private extension Vector3 {
@@ -98,5 +112,7 @@ public func encodeLine(_ event: HelperEvent) -> Data {
         return try! encoder.encode(dto)
     case .status(let status):
         return try! encoder.encode(StatusDTO(status: status.rawValue))
+    case .command(let command):
+        return try! encoder.encode(CommandDTO(command: command.rawValue))
     }
 }

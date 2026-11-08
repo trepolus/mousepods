@@ -2,6 +2,8 @@
 // mousepods-motion: reads AirPods head tracking through CoreMotion and sends it to the MousePods
 // controller as UDP datagrams on 127.0.0.1 (format: MotionWire). Started by the controller with
 // `open MousePodsMotion.app --args --port N --parent-pid P`; exits when the controller is gone.
+import AppKit
+import Carbon.HIToolbox
 import CoreMotion
 import Darwin
 import Foundation
@@ -82,6 +84,51 @@ func makeMotionHandler(sender: UDPSender) -> CMHeadphoneMotionManager.DeviceMoti
     }
 }
 
+/// Owns the registered shortcuts; Carbon calls back with the index as the hot key id.
+final class HotkeyRegistry: @unchecked Sendable {
+    let sender: UDPSender
+    let hotkeys: [Hotkey]
+    private var refs: [EventHotKeyRef?] = []
+
+    init(sender: UDPSender, hotkeys: [Hotkey]) {
+        self.sender = sender
+        self.hotkeys = hotkeys
+    }
+
+    func fire(_ index: Int) {
+        guard hotkeys.indices.contains(index) else { return }
+        sender.send(.command(hotkeys[index].command))
+    }
+
+    /// Registers every shortcut; returns the ones another app already holds.
+    func register() -> [Hotkey] {
+        var spec = EventTypeSpec(eventClass: OSType(kEventClassKeyboard), eventKind: UInt32(kEventHotKeyPressed))
+        let handler: EventHandlerUPP = { _, event, userData in
+            var id = EventHotKeyID()
+            GetEventParameter(event, EventParamName(kEventParamDirectObject), EventParamType(typeEventHotKeyID),
+                              nil, MemoryLayout<EventHotKeyID>.size, nil, &id)
+            if let userData {
+                Unmanaged<HotkeyRegistry>.fromOpaque(userData).takeUnretainedValue().fire(Int(id.id))
+            }
+            return noErr
+        }
+        InstallEventHandler(GetApplicationEventTarget(), handler, 1, &spec,
+                            Unmanaged.passUnretained(self).toOpaque(), nil)
+        var taken: [Hotkey] = []
+        for (index, hotkey) in hotkeys.enumerated() {
+            var ref: EventHotKeyRef?
+            let id = EventHotKeyID(signature: OSType(0x4D50_4D53), id: UInt32(index))   // "MPMS"
+            let status = RegisterEventHotKey(hotkey.keyCode, hotkey.modifiers, id, GetApplicationEventTarget(), 0, &ref)
+            if status == noErr {
+                refs.append(ref)
+            } else {
+                taken.append(hotkey)
+            }
+        }
+        return taken
+    }
+}
+
 func processIsGone(_ pid: Int32) -> Bool {
     kill(pid, 0) != 0 && errno == ESRCH
 }
@@ -127,5 +174,14 @@ let watchdog = Timer(timeInterval: 1.0, repeats: true) { _ in
         }
     }
 }
-RunLoop.main.add(watchdog, forMode: .default)
-RunLoop.main.run()
+RunLoop.main.add(watchdog, forMode: .common)
+
+let hotkeys = HotkeyRegistry(sender: sender, hotkeys: defaultHotkeys)
+for hotkey in hotkeys.register() {
+    FileHandle.standardError.write(Data("mousepods-motion: shortcut for \(hotkey.command.rawValue) is taken\n".utf8))
+}
+
+// An accessory NSApplication (no Dock icon, no menu bar) so Carbon delivers hot key events.
+let app = NSApplication.shared
+app.setActivationPolicy(.accessory)
+app.run()

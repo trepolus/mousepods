@@ -70,3 +70,31 @@ struct HelperOptionsTests {
         #expect(HelperOptions.parse(arguments) == nil)
     }
 }
+
+@Suite("Hotkeys")
+struct HotkeyTests {
+    @Test("command uses the name the controller accepts from --send", arguments: HotkeyCommand.allCases)
+    func commandWire(command: HotkeyCommand) throws {
+        let json = try decode(encodeLine(.command(command)))
+        #expect(json["type"] as? String == "command")
+        #expect(json["command"] as? String == command.rawValue)
+    }
+
+    @Test("command names match the controller's --send commands")
+    func commandContract() {
+        #expect(HotkeyCommand.allCases.map(\.rawValue) == ["recenter", "toggle", "scroll", "mode"])
+    }
+
+    @Test("every command has exactly one shortcut and no two shortcuts collide")
+    func uniqueBindings() {
+        #expect(defaultHotkeys.map(\.command).sorted { $0.rawValue < $1.rawValue }
+                == HotkeyCommand.allCases.sorted { $0.rawValue < $1.rawValue })
+        let keys = defaultHotkeys.map { "\($0.keyCode)-\($0.modifiers)" }
+        #expect(Set(keys).count == keys.count)
+    }
+
+    @Test("shortcuts use Control+Option like Control+Alt on Linux")
+    func modifiers() {
+        #expect(defaultHotkeys.allSatisfy { $0.modifiers == CarbonModifier.control | CarbonModifier.option })
+    }
+}
