@@ -2197,7 +2197,7 @@ def open_ui(port, cfg_path):
                               f"--class=AirPodsMouse"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                              start_new_session=True)
             return
-    subprocess.Popen(["xdg-open", url])
+    subprocess.Popen(["open" if sys.platform == "darwin" else "xdg-open", url])
 
 
 def main():
