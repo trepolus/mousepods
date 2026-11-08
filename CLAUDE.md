@@ -36,6 +36,8 @@ On macOS two tests fail for platform reasons (no `SOCK_SEQPACKET` in `test_l2cap
 - `tests/test_glide_calib.py` swaps the global `time.monotonic`; inject a clock instead of reading the real one in
   loops under test, or the full suite can hang.
 - Every top-level module and package must be listed in `pyproject.toml` (`tests/test_pyproject.py` checks it).
+  An editable `uv tool install` only knows the modules present at install time: after adding one, run
+  `uv tool install --editable . --reinstall`.
 - ctypes cannot call variadic C functions safely on Apple silicon: use `CGEventCreateScrollWheelEvent2`.
 - The helper/controller wire format is mirrored in `macos/Sources/MotionWire` and `macos_motion.py`; change both
   and their contract tests together.

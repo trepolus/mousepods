@@ -166,6 +166,7 @@ uv tool install --editable /path/to/mousepods    # once: puts `mousepods` on you
 mousepods --diag                                 # live rates, no cursor control
 mousepods                                        # mouse control (starts paused)
 mousepods resume                                 # also: pause, toggle, recenter, quit
+mousepods menu                                   # interactive overview: arrows/Tab move, Space switches
 mousepods status                                 # what is on
 mousepods on hands tilt                          # switch features live: hands, stem, dwell, tilt
 mousepods off dwell
