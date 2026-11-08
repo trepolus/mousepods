@@ -2,26 +2,30 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright 2026 Matteo Gaudioso (starman-tech) — https://github.com/starman-tech/mousepods
 """
-airpods_mouse_controller.py — AirPods -> souris / pointeur (Linux, Wayland ou X11).
+airpods_mouse_controller.py: AirPods as a mouse or pointer (Linux on Wayland or X11, and macOS).
 
-  * AirPods 3        : protocole Apple RemoteHID (HID sur AACP, RTBuddy 0x800), jusqu'à ~200 Hz.
-  * AirPods Pro 2/3/4: protocole SensorDataWX (RTBuddy 0x100000).
-  * Mouvement : gyroscope + gravité des écouteurs -> lacet autour de la VERTICALE, tangage autour
-    d'un axe latéral appris en calibration. Marche quelle que soit l'orientation :
-    écouteurs portés (tête), écouteurs dans le boîtier ouvert, ou un AirPod tenu en main.
-  * Modes : "souris" (la vitesse du geste déplace le curseur, avec accélération)
-            "pointeur" (la direction visée = position à l'écran, comme un laser).
-  * Injection : /dev/uinput (python-evdev). Réglages rechargés à chaud depuis config.json.
+  * AirPods 3:          Apple RemoteHID protocol (HID over AACP, RTBuddy 0x800), up to ~200 Hz (Linux).
+  * AirPods Pro 2/3/4:  SensorDataWX protocol (RTBuddy 0x100000) (Linux).
+  * macOS:              CoreMotion headphone motion through the helper app in macos/ (~25 Hz).
+  * Motion: gyroscope + gravity -> yaw around the VERTICAL, pitch around a lateral axis learned during
+    calibration. Works in any orientation: buds worn (head), buds in the open case, or one bud in the hand.
+  * Modes: "souris" (mouse: gesture speed moves the cursor, with acceleration)
+           "pointeur" (pointer: where you aim is where the cursor goes, like a laser pointer)
+  * Output: /dev/uinput (python-evdev) on Linux, CoreGraphics events on macOS. Settings reload live from config.json.
 
-Usage :
-  airpods_mouse_controller.py                  lance le contrôleur
-  airpods_mouse_controller.py --settings       panneau de réglages (curseurs en direct)
-  airpods_mouse_controller.py --calibrate      calibration à l'écran (tête / boîtier / main)
-  airpods_mouse_controller.py --diag           affiche les vitesses/angles en direct
-  airpods_mouse_controller.py --opentrack      + suivi de tête vers OpenTrack (UDP 127.0.0.1:4242)
-  airpods_mouse_controller.py --sim-joystick   + manette virtuelle « tête » (jeux Linux natifs), voir docs/SIMS.md
-  airpods_mouse_controller.py --send CMD       recenter|toggle|pause|resume|scroll|mode|quit
-  airpods_mouse_controller.py --install-hotkeys  raccourcis GNOME (Ctrl+Alt+C/P/S/M)
+Usage:
+  mousepods                        start the controller (mouse control starts paused)
+  mousepods --ui                   open the app (starts the controller if needed)
+  mousepods --settings             settings panel (live sliders)
+  mousepods --calibrate            on-screen calibration (head / case / hand)
+  mousepods --diag                 live rates and angles, no cursor control
+  mousepods --opentrack            also send head tracking to OpenTrack (UDP 127.0.0.1:4242)
+  mousepods --sim-joystick         also create a virtual "head" joystick (native Linux games), see docs/SIMS.md
+  mousepods --send CMD             recenter|toggle|pause|resume|scroll|mode|quit
+  mousepods --install-hotkeys      GNOME shortcuts (Ctrl+Alt+C/P/S/M); on macOS the helper registers Ctrl+Option+C/P/S/M
+
+  With uv from any directory: uv run --project /path/to/mousepods mousepods --help
+  (or: python3 airpods_mouse_controller.py ...)
 """
 import argparse
 import json
@@ -2198,19 +2202,19 @@ def open_ui(port, cfg_path):
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("-c", "--config", default=DEFAULT_CONFIG_PATH)
-    ap.add_argument("--diag", action="store_true")
-    ap.add_argument("--calibrate", action="store_true")
-    ap.add_argument("--settings", action="store_true")
-    ap.add_argument("--ui", action="store_true", help="ouvre l'application (lance le contrôleur si besoin)")
-    ap.add_argument("--port", type=int, default=8737)
-    ap.add_argument("--no-web", action="store_true")
-    ap.add_argument("--send", metavar="CMD")
-    ap.add_argument("--install-hotkeys", action="store_true")
-    ap.add_argument("-v", "--verbose", action="store_true")
-    ap.add_argument("--opentrack", action="store_true", help="envoie le suivi de tête à OpenTrack (UDP) pour la session")
+    ap.add_argument("-c", "--config", default=DEFAULT_CONFIG_PATH, help="config file (default: config.json next to the script)")
+    ap.add_argument("--diag", action="store_true", help="show live rates and angles, no cursor control")
+    ap.add_argument("--calibrate", action="store_true", help="on-screen calibration window")
+    ap.add_argument("--settings", action="store_true", help="settings window with live sliders")
+    ap.add_argument("--ui", action="store_true", help="open the app (starts the controller if needed)")
+    ap.add_argument("--port", type=int, default=8737, help="web app port (default: 8737)")
+    ap.add_argument("--no-web", action="store_true", help="do not start the web app")
+    ap.add_argument("--send", metavar="CMD", help="send a command to the running controller: recenter|toggle|pause|resume|scroll|mode|quit")
+    ap.add_argument("--install-hotkeys", action="store_true", help="install GNOME shortcuts (Linux)")
+    ap.add_argument("-v", "--verbose", action="store_true", help="debug logging")
+    ap.add_argument("--opentrack", action="store_true", help="send head tracking to OpenTrack (UDP) for this session")
     ap.add_argument("--sim-joystick", action="store_true",
-                    help="crée une manette virtuelle dont les axes sont l'orientation de la tête (session)")
+                    help="create a virtual joystick whose axes follow the head (this session)")
     args = ap.parse_args()
     logging.basicConfig(level=logging.DEBUG if args.verbose else logging.INFO,
                         format="%(asctime)s %(levelname)s %(message)s", datefmt="%H:%M:%S")
