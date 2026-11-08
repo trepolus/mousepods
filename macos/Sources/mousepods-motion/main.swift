@@ -58,6 +58,17 @@ final class ControlListener: @unchecked Sendable {
 final class NowPlaying: @unchecked Sendable {
     let sender: UDPSender
     private var targets: [(MPRemoteCommand, Any)] = []
+    private var debouncer = StemDebouncer()
+    private let lock = NSLock()
+
+    func forward(_ press: StemPress) {
+        lock.lock()
+        let accepted = debouncer.accept(press, at: ProcessInfo.processInfo.systemUptime)
+        lock.unlock()
+        if let accepted {
+            sender.send(.stem(accepted))
+        }
+    }
 
     init(sender: UDPSender) {
         self.sender = sender
@@ -68,21 +79,25 @@ final class NowPlaying: @unchecked Sendable {
         let center = MPRemoteCommandCenter.shared()
         let info = MPNowPlayingInfoCenter.default()
         if claim {
-            let presses: [(MPRemoteCommand, StemPress)] = [
-                (center.togglePlayPauseCommand, .single), (center.playCommand, .single),
-                (center.pauseCommand, .single), (center.nextTrackCommand, .double),
-                (center.previousTrackCommand, .triple),
+            let presses: [(MPRemoteCommand, StemPress, String)] = [
+                (center.togglePlayPauseCommand, .single, "toggle"), (center.playCommand, .single, "play"),
+                (center.pauseCommand, .single, "pause"), (center.nextTrackCommand, .double, "next"),
+                (center.previousTrackCommand, .triple, "previous"),
             ]
-            for (command, press) in presses {
-                let sender = self.sender
-                let token = command.addTarget { _ in
-                    sender.send(.stem(press))
+            for (command, press, name) in presses {
+                let token = command.addTarget { [unowned self] _ in
+                    NSLog("mousepods-motion: remote command %@ -> stem %@", name, press.rawValue)
+                    self.forward(press)
+                    // A pause or toggle would leave us "paused", and macOS then hands play/pause back to the
+                    // last music app. Stay "playing" so the next press reaches us too.
+                    MPNowPlayingInfoCenter.default().playbackState = .playing
                     return .success
                 }
                 targets.append((command, token))
             }
             info.nowPlayingInfo = [MPMediaItemPropertyTitle: "MousePods mouse control"]
             info.playbackState = .playing
+            NSLog("mousepods-motion: claimed Now Playing")
         } else {
             for (command, token) in targets {
                 command.removeTarget(token)
@@ -90,6 +105,7 @@ final class NowPlaying: @unchecked Sendable {
             targets.removeAll()
             info.playbackState = .stopped
             info.nowPlayingInfo = nil
+            NSLog("mousepods-motion: released Now Playing")
         }
     }
 }
@@ -102,10 +118,12 @@ final class HeadphoneDelegate: NSObject, CMHeadphoneMotionManagerDelegate {
     }
 
     func headphoneMotionManagerDidConnect(_ manager: CMHeadphoneMotionManager) {
+        NSLog("mousepods-motion: headphones connected")
         sender.send(.status(.connected))
     }
 
     func headphoneMotionManagerDidDisconnect(_ manager: CMHeadphoneMotionManager) {
+        NSLog("mousepods-motion: headphones disconnected")
         sender.send(.status(.disconnected))
     }
 }

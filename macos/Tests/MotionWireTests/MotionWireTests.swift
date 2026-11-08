@@ -127,3 +127,35 @@ struct StemTests {
         #expect(HelperControl.parse(Data(text.utf8)) == nil)
     }
 }
+
+@Suite("Stem debouncing")
+struct StemDebouncerTests {
+    @Test("one press reported twice by macOS is forwarded once")
+    func duplicate() {
+        var d = StemDebouncer()
+        #expect(d.accept(.single, at: 10.000) == .single)
+        #expect(d.accept(.single, at: 10.004) == nil)
+    }
+
+    @Test("two separate presses are both forwarded")
+    func separate() {
+        var d = StemDebouncer()
+        #expect(d.accept(.single, at: 10.0) == .single)
+        #expect(d.accept(.single, at: 10.6) == .single)
+    }
+
+    @Test("a different press right after is not swallowed")
+    func differentKind() {
+        var d = StemDebouncer()
+        #expect(d.accept(.single, at: 10.0) == .single)
+        #expect(d.accept(.double, at: 10.05) == .double)
+    }
+
+    @Test("the window counts from the last forwarded press")
+    func window() {
+        var d = StemDebouncer(window: 0.25)
+        #expect(d.accept(.single, at: 0.0) == .single)
+        #expect(d.accept(.single, at: 0.2) == nil)
+        #expect(d.accept(.single, at: 0.3) == .single)
+    }
+}
