@@ -51,6 +51,27 @@ class ParseDatagramTests(unittest.TestCase):
     def test_stem_presses_match_the_stem_config(self):
         self.assertLessEqual({p.value for p in mm.StemPress}, set(m.DEFAULTS["stem"]))
 
+    def test_hand_events_are_understood(self):
+        cases = [
+            ({"type": "hand", "event": "down", "finger": "index"}, mm.PinchDown(mm.Finger.INDEX)),
+            ({"type": "hand", "event": "up", "finger": "middle"}, mm.PinchUp(mm.Finger.MIDDLE)),
+            ({"type": "hand", "event": "fist"}, mm.FIST),
+        ]
+        for obj, want in cases:
+            self.assertEqual(mm.parse_datagram(wire(obj)), want, obj)
+
+    def test_hand_gestures_map_to_mouse_actions(self):
+        cases = [
+            ("index pinch holds the left button", mm.PinchDown(mm.Finger.INDEX), ("press", "left")),
+            ("opening it releases", mm.PinchUp(mm.Finger.INDEX), ("release", "left")),
+            ("middle pinch right-clicks", mm.PinchDown(mm.Finger.MIDDLE), ("command", "right_click")),
+            ("middle release does nothing", mm.PinchUp(mm.Finger.MIDDLE), None),
+            ("ring pinch toggles scroll", mm.PinchDown(mm.Finger.RING), ("command", "toggle_scroll")),
+            ("fist pauses", mm.FIST, ("command", "pause")),
+        ]
+        for name, event, want in cases:
+            self.assertEqual(mm.hand_action(event), want, name)
+
     def test_malformed_datagrams_are_dropped(self):
         cases = {
             "not json": b"{nope",
@@ -60,6 +81,9 @@ class ParseDatagramTests(unittest.TestCase):
             "unknown status": wire({"type": "status", "status": "sleeping"}),
             "unknown command": wire({"type": "command", "command": "quit"}),
             "unknown stem press": wire({"type": "stem", "press": "long"}),
+            "pinch without finger": wire({"type": "hand", "event": "down"}),
+            "pinch with unknown finger": wire({"type": "hand", "event": "down", "finger": "little"}),
+            "unknown hand event": wire({"type": "hand", "event": "wave"}),
             "missing gravity": wire({k: v for k, v in SAMPLE.items() if k != "gravity"}),
             "short rate": wire(with_field(rate=[1.0, 2.0])),
             "three-part quaternion": wire(with_field(quat=[1.0, 0.0, 0.0])),
@@ -159,6 +183,8 @@ class MacMotionSourceTests(unittest.TestCase):
             self.source.receive()
             self.assertTrue(self.source.send_control(now_playing=True))
             self.assertEqual(json.loads(helper.recv(512)), {"type": "control", "now_playing": True})
+            self.assertTrue(self.source.send_control(camera=False))
+            self.assertEqual(json.loads(helper.recv(512)), {"type": "control", "camera": False})
 
     def test_samples_and_status_arrive_over_udp(self):
         self.send_from_helper(wire({"type": "status", "status": "connected"}))

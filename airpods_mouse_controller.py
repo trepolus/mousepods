@@ -83,6 +83,7 @@ DEFAULTS = {
              "rewind_s": 0.5},             # macOS: stem clicks land where the cursor was this long before
     "roll_click": {"enabled": False, "trigger_deg": 15.0, "max_duration_s": 0.6,
                    "right": "left_click", "left": "right_click"},
+    "hands": {"enabled": False},    # macOS: camera pinch gestures (index = click/drag, middle = right, ring = scroll)
     "dwell_click": {"enabled": False, "time_s": 1.0, "radius_px": 12, "min_move_px": 60},
     "scroll": {"lines_per_deg": 0.25},
     # gestes tête / mâchoire (gestures.py). Tous les seuils ici, réglables à chaud depuis l'interface.
@@ -1755,6 +1756,8 @@ def run_macos(ctl, web, ctrl, cfg):
     import macos_motion
     source = macos_motion.MacMotionSource()
     claimed = False
+    camera_on = False
+    camera_sync = macos_motion.NowPlayingSync()       # same claim/refresh rule, for the camera flag
     try:
         try:
             source.start()
@@ -1792,6 +1795,18 @@ def run_macos(ctl, web, ctrl, cfg):
                 elif isinstance(event, macos_motion.HotkeyCommand):
                     log.info("Shortcut: %s", event.value)
                     ctl.command(event.value)
+                elif isinstance(event, (macos_motion.PinchDown, macos_motion.PinchUp, macos_motion.Fist)):
+                    action = macos_motion.hand_action(event)
+                    log.info("Hand: %s -> %s", event, action)
+                    if action is None or ctl.diag:
+                        pass
+                    elif action[0] == "press":
+                        if not ctl.inactive:
+                            ctl.ptr.press(action[1])
+                    elif action[0] == "release":
+                        ctl.ptr.release(action[1])          # always allowed: never leave a button down
+                    else:
+                        ctl.command(action[1])
                 elif isinstance(event, macos_motion.StemPress):
                     st = cfg["stem"]
                     action = st.get(event.value, "none")
@@ -1834,12 +1849,23 @@ def run_macos(ctl, web, ctrl, cfg):
                     log.info("Stem presses %s (Now Playing %s)", "on" if claim else "off",
                              "claimed" if claim else "released")
                     claimed = claim
+            # Camera hand tracking: only while the mouse is active (camera light off when paused).
+            want = bool(cfg.get("hands", {}).get("enabled")) and not ctl.diag and not ctl.paused
+            cam = camera_sync.update(want, now)
+            if cam is not None and source.send_control(camera=cam):
+                if cam != camera_on:
+                    log.info("Camera hand gestures %s", "on" if cam else "off")
+                    camera_on = cam
+            if ctl.inactive and getattr(ctl.ptr, "holding", False):
+                ctl.ptr.release_all()
             if now >= next_reload:
                 next_reload = now + 1.0
                 ctl.maybe_reload()
     finally:
         if claimed:
             source.send_control(now_playing=False)
+        if camera_on:
+            source.send_control(camera=False)
         source.close()
 
 

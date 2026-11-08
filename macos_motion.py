@@ -11,8 +11,11 @@ Wire format (frozen, mirrored by macos/Sources/MotionWire):
   {"type": "status", "status": "connected" | "disconnected" | "unavailable" | "denied"}
   {"type": "command", "command": "recenter" | "toggle" | "scroll" | "mode"}   (global shortcuts)
   {"type": "stem", "press": "single" | "double" | "triple"}
+  {"type": "hand", "event": "down" | "up", "finger": "index" | "middle" | "ring"}   camera pinches
+  {"type": "hand", "event": "fist"}
 Controller to helper (sent to the helper's own address):
   {"type": "control", "now_playing": true | false}   claim or release the Now Playing role (stem presses)
+  {"type": "control", "camera": true | false}        run or stop camera hand tracking
 """
 import enum
 import json
@@ -53,6 +56,58 @@ class StemPress(enum.Enum):
     SINGLE = "single"
     DOUBLE = "double"
     TRIPLE = "triple"
+
+
+class Finger(enum.Enum):
+    INDEX = "index"
+    MIDDLE = "middle"
+    RING = "ring"
+
+
+@dataclass(frozen=True)
+class PinchDown:
+    """Thumb touched this fingertip (camera hand tracking)."""
+    finger: Finger
+
+
+@dataclass(frozen=True)
+class PinchUp:
+    finger: Finger
+
+
+@dataclass(frozen=True)
+class Fist:
+    """All fingers closed for about half a second."""
+
+
+FIST = Fist()
+
+# Camera gesture -> ("press" | "release", button) or ("command", Controller command). Index pinch is the left
+# button itself, so a quick pinch is a click and a held pinch is a drag.
+HAND_ACTIONS = {
+    PinchDown(Finger.INDEX): ("press", "left"),
+    PinchUp(Finger.INDEX): ("release", "left"),
+    PinchDown(Finger.MIDDLE): ("command", "right_click"),
+    PinchDown(Finger.RING): ("command", "toggle_scroll"),
+    FIST: ("command", "pause"),
+}
+
+
+def hand_action(event):
+    return HAND_ACTIONS.get(event)
+
+
+def _hand_event(obj):
+    kind = obj.get("event")
+    if kind == "fist":
+        return FIST
+    if kind not in ("down", "up"):
+        return None
+    try:
+        finger = Finger(obj.get("finger"))
+    except ValueError:
+        return None
+    return PinchDown(finger) if kind == "down" else PinchUp(finger)
 
 
 @dataclass(frozen=True)
@@ -102,6 +157,8 @@ def parse_datagram(data):
             return HotkeyCommand(obj.get("command"))
         except ValueError:
             return None
+    if kind == "hand":
+        return _hand_event(obj)
     if kind == "stem":
         try:
             return StemPress(obj.get("press"))
@@ -191,11 +248,14 @@ class MacMotionSource:
         self.helper_address = address
         return parse_datagram(data)
 
-    def send_control(self, now_playing):
-        """Tell the helper to claim or release Now Playing. False when no helper has been heard yet."""
+    def send_control(self, **flags):
+        """Send one control flag (now_playing=..., camera=...). False when no helper has been heard yet."""
         if self.helper_address is None:
             return False
-        message = json.dumps({"type": "control", "now_playing": bool(now_playing)}).encode()
+        ((key, value),) = flags.items()
+        if key not in ("now_playing", "camera"):
+            raise ValueError(f"unknown control flag {key}")
+        message = json.dumps({"type": "control", key: bool(value)}).encode()
         self.sock.sendto(message, self.helper_address)
         return True
 
