@@ -9,3 +9,5 @@ captures/private/
 garmin_mouse.json
 garmin_calib.json
 native/out/
+*.egg-info/
+uv.lock

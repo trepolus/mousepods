@@ -1,0 +1,30 @@
+# SPDX-License-Identifier: Apache-2.0
+# Lets uv run MousePods from anywhere without a manual venv:
+#   uv run --project /path/to/mousepods mousepods --help
+# requirements.txt stays the source for pip and the Flatpak build.
+[project]
+name = "mousepods"
+version = "1.0.0"
+description = "AirPods head tracking and motion sensors as a mouse"
+readme = "README.md"
+license = "Apache-2.0"
+requires-python = ">=3.10"
+dependencies = [
+    "numpy>=1.24",
+    "evdev>=1.6; sys_platform == 'linux'",
+]
+
+[project.scripts]
+mousepods = "airpods_mouse_controller:main"
+
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["desktop", "garmin"]
+py-modules = [
+    "airpods_mouse_controller", "bluez_dbus", "bridge_install", "calibration", "game_bridge",
+    "game_profiles", "games_service", "gestures", "i18n", "l2cap", "labo", "macos_motion",
+    "mousepods_web", "opentrack_out", "paths", "silent_speech", "sim_joystick", "steam_games",
+]
