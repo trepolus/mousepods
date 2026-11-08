@@ -79,7 +79,8 @@ DEFAULTS = {
                "still_time_s": 0.12, "leak_s": 3.0},
     "bias": {"still_range_dps": 3.0, "still_time_s": 0.4, "rate": 0.03},
     "stem": {"enabled": True, "single": "left_click", "double": "right_click",
-             "triple": "toggle_scroll", "long": "toggle_pause"},
+             "triple": "toggle_scroll", "long": "toggle_pause",
+             "rewind_s": 0.5},             # macOS: stem clicks land where the cursor was this long before
     "roll_click": {"enabled": False, "trigger_deg": 15.0, "max_duration_s": 0.6,
                    "right": "left_click", "left": "right_click"},
     "dwell_click": {"enabled": False, "time_s": 1.0, "radius_px": 12, "min_move_px": 60},
@@ -1091,6 +1092,17 @@ class Controller:
             self.recenter(quiet=True)
 
     # ---- commandes
+    def click(self, button, rewind_s=0.0):
+        """Click unless inactive. rewind_s > 0 clicks where the cursor was that long ago (macOS pointer)."""
+        if self.inactive:
+            return
+        if rewind_s > 0:
+            self.ptr.click(button, rewind_s=rewind_s)
+            log.info("Clic %s (at the spot %.2f s before)", button, rewind_s)
+        else:
+            self.ptr.click(button)
+            log.info("Clic %s", button)
+
     def command(self, cmd):
         cmd = cmd.strip().lower()
         if cmd == "recenter":
@@ -1118,9 +1130,7 @@ class Controller:
             self.recenter(quiet=True)
             notify(self.cfg, tr("srv.status.mode", mode=tr(f"srv.mode.{new}")))
         elif cmd in ("left_click", "right_click", "middle_click"):
-            if not self.inactive:
-                self.ptr.click(cmd.split("_")[0])
-                log.info("Clic %s", cmd.split("_")[0])
+            self.click(cmd.split("_")[0])
         elif cmd == "reload":
             self._cfg_mtime = 0
             self.maybe_reload()
@@ -1786,8 +1796,12 @@ def run_macos(ctl, web, ctrl, cfg):
                     st = cfg["stem"]
                     action = st.get(event.value, "none")
                     log.info("Stem press: %s -> %s", event.value, action)
-                    if st["enabled"] and not ctl.diag and (
-                            action in ("toggle_pause", "toggle", "recenter") or not ctl.paused):
+                    if not st["enabled"] or ctl.diag:
+                        pass
+                    elif action in ("left_click", "right_click", "middle_click"):
+                        # The press jolts the head and macOS reports it late: click where the user aimed.
+                        ctl.click(action.split("_")[0], rewind_s=float(st.get("rewind_s", 0.5)))
+                    elif action in ("toggle_pause", "toggle", "recenter") or not ctl.paused:
                         ctl.command(action)
                 elif isinstance(event, macos_motion.HeadphoneStatus) and event != last_status:
                     last_status = event

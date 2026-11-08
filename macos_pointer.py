@@ -85,6 +85,30 @@ class CursorMath:
         return point
 
 
+class CursorHistory:
+    """Where the cursor was over the last keep_s seconds, to click where the user aimed before a jolt."""
+
+    def __init__(self, keep_s=1.5):
+        self.keep_s = keep_s
+        self._points = []          # (time, point), oldest first
+
+    def record(self, t, point):
+        self._points.append((t, point))
+        while self._points and self._points[0][0] < t - self.keep_s:
+            self._points.pop(0)
+
+    @property
+    def last_time(self):
+        return self._points[-1][0] if self._points else None
+
+    def at(self, t):
+        """Position at time t: the last record at or before t, the oldest if t is older, None if empty."""
+        if not self._points:
+            return None
+        earlier = [point for when, point in self._points if when <= t]
+        return earlier[-1] if earlier else self._points[0][1]
+
+
 class ScrollMath:
     def __init__(self):
         self._wheel = 0.0
@@ -195,6 +219,7 @@ class MacPointer:
         self._clock = clock
         self._math = CursorMath()
         self._scroll = ScrollMath()
+        self._history = CursorHistory()
         self._displays = self.cg.displays()
         self._displays_at = clock()
         if not self.cg.trusted():
@@ -207,18 +232,36 @@ class MacPointer:
             self._displays_at = now
         return self._displays
 
+    HELD_S = 0.05     # a gap longer than this means the cursor rested where it was
+
+    def _moved(self, before, point):
+        now = self._clock()
+        last = self._history.last_time
+        if last is None or now - last > self.HELD_S:
+            self._history.record(now - 0.001, before)      # where it rested until now
+        self.cg.move(point)
+        self._history.record(now, point)
+
     def move_rel(self, dx, dy):
-        point = self._math.relative(self.cg.cursor(), dx, dy, self.displays())
+        current = self.cg.cursor()
+        point = self._math.relative(current, dx, dy, self.displays())
         if point is not None:
-            self.cg.move(point)
+            self._moved(current, point)
 
     def move_abs(self, fx, fy):
         point = self._math.absolute(fx, fy, self.displays())
         if point is not None:
-            self.cg.move(point)
+            self._moved(self.cg.cursor(), point)
 
-    def click(self, button="left"):
+    def click(self, button="left", rewind_s=0.0):
+        """Click at the cursor, or where it was rewind_s seconds ago (a stem press jolts the head)."""
         point = self.cg.cursor()
+        if rewind_s > 0:
+            earlier = self._history.at(self._clock() - rewind_s)
+            if earlier is not None and earlier != point:
+                self.cg.move(earlier)
+                self._history.record(self._clock(), earlier)
+                point = earlier
         self.cg.button(button, True, point)
         self._sleep(0.015)
         self.cg.button(button, False, point)

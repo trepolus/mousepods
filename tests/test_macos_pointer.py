@@ -75,6 +75,30 @@ class CursorMathTests(unittest.TestCase):
         self.assertEqual([s.lines(v) for v in (0.6, 0.6, -2.5, 0.3)], [0, 1, -2, 0])
 
 
+class CursorHistoryTests(unittest.TestCase):
+    def test_position_at_an_earlier_time(self):
+        h = mp.CursorHistory(keep_s=1.0)
+        for t, point in ((10.0, (100, 100)), (10.2, (110, 100)), (10.4, (130, 105)), (10.6, (160, 120))):
+            h.record(t, point)
+        cases = [
+            ("exactly a recorded time", 10.2, (110, 100)),
+            ("between records takes the earlier one", 10.5, (130, 105)),
+            ("before the oldest record takes the oldest", 9.0, (100, 100)),
+            ("after the newest takes the newest", 11.0, (160, 120)),
+        ]
+        for name, t, want in cases:
+            self.assertEqual(h.at(t), want, name)
+
+    def test_old_positions_are_forgotten(self):
+        h = mp.CursorHistory(keep_s=1.0)
+        h.record(0.0, (1, 1))
+        h.record(5.0, (2, 2))
+        self.assertEqual(h.at(0.0), (2, 2))
+
+    def test_empty_history_knows_nothing(self):
+        self.assertIsNone(mp.CursorHistory().at(1.0))
+
+
 class FakeCoreGraphics:
     def __init__(self, trusted=True, cursor=(100, 100)):
         self.calls = []
@@ -111,6 +135,25 @@ class MacPointerTests(unittest.TestCase):
         p.move_rel(0.6, 0)
         self.assertEqual(cg.calls, [("move", (305, 198)), ("move", (306, 198))])
 
+    def test_rewound_click_lands_where_the_cursor_was_before_the_jolt(self):
+        cg = FakeCoreGraphics(cursor=(300, 200))
+        now = [0.0]
+        p = mp.MacPointer(backend=cg, sleep=lambda s: None, clock=lambda: now[0])
+        for t, dx in ((0.1, 10), (0.2, 10), (0.6, 40), (0.7, 40)):    # aim, then the press jolts the head
+            now[0] = t
+            p.move_rel(dx, 0)
+        now[0] = 0.8
+        p.click("left", rewind_s=0.5)
+        self.assertEqual(cg.calls[-3:], [("move", (320, 200)), ("button", "left", True, (320, 200)),
+                                         ("button", "left", False, (320, 200))])
+
+    def test_click_without_rewind_stays_put(self):
+        cg = FakeCoreGraphics(cursor=(300, 200))
+        p = mp.MacPointer(backend=cg, sleep=lambda s: None, clock=lambda: 1.0)
+        p.move_rel(10, 0)
+        p.click("left")
+        self.assertEqual(cg.calls[-2:], [("button", "left", True, (310, 200)), ("button", "left", False, (310, 200))])
+
     def test_click_presses_and_releases_where_the_cursor_is(self):
         cg = FakeCoreGraphics(cursor=(42, 24))
         mp.MacPointer(backend=cg, sleep=lambda s: None).click("right")
@@ -138,6 +181,42 @@ class MacPointerTests(unittest.TestCase):
         with self.assertLogs("macos_pointer", level="WARNING") as logs:
             mp.MacPointer(backend=FakeCoreGraphics(trusted=False), sleep=lambda s: None)
         self.assertIn("Accessibility", logs.output[0])
+
+
+class ControllerClickTests(unittest.TestCase):
+    def controller(self):
+        import airpods_mouse_controller as m
+
+        class RecordingPointer:
+            def __init__(self):
+                self.clicks = []
+
+            def click(self, button="left", **kwargs):
+                self.clicks.append((button, kwargs))
+
+            def __getattr__(self, name):
+                return lambda *a, **k: None
+
+        cfg = m.load_config("/nonexistent.json")
+        cfg.update(notifications=False, mouse_paused=False)
+        ptr = RecordingPointer()
+        return m.Controller(cfg, ptr), ptr
+
+    def test_stem_click_passes_the_rewind_to_the_pointer(self):
+        ctl, ptr = self.controller()
+        ctl.click("left", rewind_s=0.5)
+        self.assertEqual(ptr.clicks, [("left", {"rewind_s": 0.5})])
+
+    def test_command_click_does_not_rewind(self):
+        ctl, ptr = self.controller()
+        ctl.command("right_click")
+        self.assertEqual(ptr.clicks, [("right", {})])
+
+    def test_no_click_while_paused(self):
+        ctl, ptr = self.controller()
+        ctl.set_paused(True)
+        ctl.click("left", rewind_s=0.5)
+        self.assertEqual(ptr.clicks, [])
 
 
 @unittest.skipUnless(sys.platform == "darwin", "CoreGraphics only exists on macOS")
