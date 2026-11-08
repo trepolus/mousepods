@@ -1596,6 +1596,9 @@ def run(cfg, cfg_path, diag=False, web_port=8737, opentrack=False, joystick=Fals
     log.info("Démarrage — mode %s, source %s", "DIAGNOSTIC" if diag else cfg["mode"], cfg["source"])
     aap = None
     try:
+        if sys.platform == "darwin":
+            run_macos(ctl, web, ctrl, cfg)
+            return
         while True:
             aap = AAPClient(cfg["device_address"], cfg["auto_connect"], cfg["sensor_interval_us"])
             if cfg_addr_hint[0]:
@@ -1706,6 +1709,70 @@ def run(cfg, cfg_path, diag=False, web_port=8737, opentrack=False, joystick=Fals
         except OSError:
             pass
         log.info("Arrêté")
+
+
+MAC_STATUS_TEXT = {
+    "connected": "AirPods connected (CoreMotion), waiting for motion: wear both buds",
+    "disconnected": "AirPods disconnected: connect them to this Mac",
+    "unavailable": "No headphone motion on this Mac: connect AirPods Pro, AirPods 3 or newer",
+    "denied": "Motion & Fitness access denied: allow MousePods Motion in System Settings, "
+              "Privacy & Security, Motion & Fitness",
+}
+
+
+def run_macos(ctl, web, ctrl, cfg):
+    """macOS loop: samples come from CoreMotion through the helper app (macos_motion), not from L2CAP."""
+    import macos_motion
+    source = macos_motion.MacMotionSource()
+    try:
+        source.start()
+        log.info("macOS: CoreMotion helper started (UDP 127.0.0.1:%d)", source.port)
+        ctl.set_device("coremotion")
+        frame = 1.0 / max(int(cfg["render_hz"]), 10)
+        next_frame = time.monotonic()
+        next_reload = time.monotonic() + 1.0
+        RECEIVING = "receiving"
+        last_status = None
+        warned_silent = False
+        started = time.monotonic()
+        while True:
+            r, _, _ = select.select([source.sock, ctrl], [], [], max(0.0, next_frame - time.monotonic()))
+            now = time.monotonic()
+            if source.sock in r:
+                event = source.receive()
+                if isinstance(event, macos_motion.MotionSample):
+                    e = macos_motion.to_engine(event)
+                    ctl.last_ht = now
+                    if ctl.place != "ear":
+                        ctl.set_place("ear")      # CoreMotion only streams while the buds are worn
+                    ctl.on_sample(e.ts_ns, e.w_dps, e.g, e.a_ms2, e.att_q15, now)
+                    if web and last_status is not RECEIVING:
+                        web.set_status(tr("srv.status.receiving"))
+                    last_status = RECEIVING
+                elif isinstance(event, macos_motion.HeadphoneStatus) and event != last_status:
+                    last_status = event
+                    text = MAC_STATUS_TEXT[event.value]
+                    (log.warning if event in (macos_motion.HeadphoneStatus.DENIED,
+                                              macos_motion.HeadphoneStatus.UNAVAILABLE) else log.info)("%s", text)
+                    if web:
+                        web.set_status(text)
+            if web:
+                web.process_queue()
+            if ctrl in r:
+                ctl.command(ctrl.recv(256).decode(errors="ignore"))
+            if not warned_silent and last_status is not RECEIVING and now - started > 5:
+                warned_silent = True
+                log.warning("No motion samples from the CoreMotion helper after 5 s: are both AirPods worn? "
+                            "Is MousePods Motion allowed under Motion & Fitness? A helper crash leaves a "
+                            "mousepods-motion report in ~/Library/Logs/DiagnosticReports.")
+            if now >= next_frame:
+                ctl.render(now)
+                next_frame = now + frame
+            if now >= next_reload:
+                next_reload = now + 1.0
+                ctl.maybe_reload()
+    finally:
+        source.close()
 
 
 # =========================================================================== lecture capteur (thread, pour les fenêtres)
