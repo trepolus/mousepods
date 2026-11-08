@@ -161,11 +161,14 @@ Swift helper (`macos/`) reads Apple's headphone motion API (`CMHeadphoneMotionMa
 motion engine. Works with AirPods that support head tracking (AirPods Pro, AirPods 3 and later, AirPods Max).
 
 ```bash
-macos/build.sh                                          # Swift tests, then macos/build/MousePodsMotion.app
-uv run --project /path/to/mousepods mousepods --help    # from any directory, no manual venv
-uv run --project /path/to/mousepods mousepods --diag    # live rates, no cursor control
-uv run --project /path/to/mousepods mousepods           # mouse control (starts paused)
-uv run --project /path/to/mousepods mousepods --send resume
+macos/build.sh                                   # Swift tests, then macos/build/MousePodsMotion.app
+uv tool install --editable /path/to/mousepods    # once: puts `mousepods` on your PATH
+mousepods --diag                                 # live rates, no cursor control
+mousepods                                        # mouse control (starts paused)
+mousepods resume                                 # also: pause, toggle, recenter, quit
+mousepods status                                 # what is on
+mousepods on hands tilt                          # switch features live: hands, stem, dwell, tilt
+mousepods off dwell
 ```
 
 * **Permissions.** *Motion & Fitness* for "MousePods Motion" (asked on first start). *Accessibility* for the
@@ -179,6 +182,8 @@ uv run --project /path/to/mousepods mousepods --send resume
 * **Clicks.** Stem press (single = left, double = right, triple = scroll): the helper becomes the *Now Playing* app
   while mouse control is active and gives play/pause back to music apps on pause. Dwell click and head-tilt click
   work as on Linux. Teeth-click gestures need the raw ~200 Hz stream and are not available.
+* **Camera hand gestures** (`mousepods on hands`): thumb+index pinch = click, held = drag; thumb+middle = right
+  click; thumb+ring = scroll mode; fist = pause. The camera runs only while mouse control is active.
 * **Guided capture.** `uv run --project /path/to/mousepods python -m macos_motion record` records the raw stream
   while prompting turns, nods and tilts (saved to `captures/private/`).
 
