@@ -913,6 +913,14 @@ class Pointer:
         self.abs.close()
 
 
+def make_pointer():
+    """uinput on Linux, CoreGraphics events on macOS."""
+    if sys.platform == "darwin":
+        import macos_pointer
+        return macos_pointer.MacPointer()
+    return Pointer()
+
+
 class NullPointer:
     def __getattr__(self, name):
         return lambda *a, **k: None
@@ -1570,7 +1578,7 @@ def open_ctrl_socket():
 
 def run(cfg, cfg_path, diag=False, web_port=8737, opentrack=False, joystick=False):
     ctrl = open_ctrl_socket()
-    ptr = NullPointer() if diag else Pointer()
+    ptr = NullPointer() if diag else make_pointer()
     ctl = Controller(cfg, ptr, diag=diag, cfg_path=cfg_path)
     try:                       # gestes tête / mâchoire : module optionnel, ne doit jamais bloquer la souris
         import gestures
