@@ -154,6 +154,34 @@ game's Steam launch option to `$HOME/.local/bin/opentrack-launcher %command%` (e
 `%command%`). In opentrack: input *UDP over network* port 4242, output *freetrack 2.0 Enhanced*
 with *Enable both*. Assetto Corsa follows the head in the cockpit camera.
 
+### macOS (CoreMotion)
+
+macOS keeps the AirPods' control channel to itself, so the Linux L2CAP path cannot run there. Instead a small
+Swift helper (`macos/`) reads Apple's headphone motion API (`CMHeadphoneMotionManager`) and feeds the same
+motion engine. Works with AirPods that support head tracking (AirPods Pro, AirPods 3 and later, AirPods Max).
+
+```bash
+macos/build.sh                                          # Swift tests, then macos/build/MousePodsMotion.app
+uv run --project /path/to/mousepods mousepods --help    # from any directory, no manual venv
+uv run --project /path/to/mousepods mousepods --diag    # live rates, no cursor control
+uv run --project /path/to/mousepods mousepods           # mouse control (starts paused)
+uv run --project /path/to/mousepods mousepods --send resume
+```
+
+* **Permissions.** *Motion & Fitness* for "MousePods Motion" (asked on first start). *Accessibility* for the
+  terminal app you run MousePods from (System Settings, Privacy & Security, Accessibility), so the cursor can move.
+  Ad-hoc builds may lose the Motion permission after a rebuild; sign with a stable identity to avoid that:
+  `MOUSEPODS_SIGN_IDENTITY="MousePods Dev" macos/build.sh`.
+* **Rate.** About 25 Hz, fixed by the API (the Linux path reaches 100 to 210 Hz). The cursor is still drawn at 120 Hz.
+* **Axes.** CoreMotion uses one head frame for every model, so a built-in profile works before calibration.
+* **Displays.** Mouse mode crosses all displays; pointer mode maps head aim onto one canvas spanning all of them.
+* **Shortcuts.** Control+Option+C recenter, P pause, S scroll, M mode (registered by the helper, no permission needed).
+* **Clicks.** Stem press (single = left, double = right, triple = scroll): the helper becomes the *Now Playing* app
+  while mouse control is active and gives play/pause back to music apps on pause. Dwell click and head-tilt click
+  work as on Linux. Teeth-click gestures need the raw ~200 Hz stream and are not available.
+* **Guided capture.** `uv run --project /path/to/mousepods python -m macos_motion record` records the raw stream
+  while prompting turns, nods and tilts (saved to `captures/private/`).
+
 ## Status: what is real, what is not
 
 | | |
@@ -167,6 +195,7 @@ with *Enable both*. Assetto Corsa follows the head in the cockpit camera.
 | ⚠️ Virtual joystick for native games | packet format, joystick and angle maths tested; not yet tried in a game |
 | ⚠️ Garmin watch as a mouse (optional module) | first tests on hardware. Accelerometer only, 25 Hz: see below |
 | ❌ Case as a mouse (buds inside) | impossible on AirPods 3: the sensors are powered off in the case |
+| ⚠️ macOS via CoreMotion (AirPods Pro 2) | motion stream (~25 Hz), axes and mouse mode tried on hardware; pointer mode across displays, shortcuts and stem press built and unit-tested, not yet tried |
 | ❓ Apple PnP DeviceID | changed before the first success; probably not needed (the MTU is), not isolated yet |
 | ❓ Other models (AirPods 2, Pro 1, Max) | untested |
 
