@@ -22,9 +22,13 @@ Usage:
   mousepods --opentrack            also send head tracking to OpenTrack (UDP 127.0.0.1:4242)
   mousepods --sim-joystick         also create a virtual "head" joystick (native Linux games), see docs/SIMS.md
   mousepods --send CMD             recenter|toggle|pause|resume|scroll|mode|quit
+  mousepods pause|resume|toggle|recenter|quit   short for --send ...
+  mousepods status                 what is on: hands, stem, dwell, tilt, mouse, mode
+  mousepods on|off FEATURE...      switch hands|stem|dwell|tilt on or off (applies live, no restart)
   mousepods --install-hotkeys      GNOME shortcuts (Ctrl+Alt+C/P/S/M); on macOS the helper registers Ctrl+Option+C/P/S/M
 
-  With uv from any directory: uv run --project /path/to/mousepods mousepods --help
+  Install the command once: uv tool install --editable /path/to/mousepods   (then just: mousepods ...)
+  Or without installing:    uv run --project /path/to/mousepods mousepods --help
   (or: python3 airpods_mouse_controller.py ...)
 """
 import argparse
@@ -2186,7 +2190,7 @@ def send_command(cmd):
     try:
         s.sendto(cmd.encode(), CTRL_SOCK)
     except (FileNotFoundError, ConnectionRefusedError):
-        print("Le contrôleur ne tourne pas.", file=sys.stderr)
+        print("MousePods is not running.", file=sys.stderr)
         return 1
     return 0
 
@@ -2247,7 +2251,32 @@ def open_ui(port, cfg_path):
     subprocess.Popen(["open" if sys.platform == "darwin" else "xdg-open", url])
 
 
+def feature_command(cmd, cfg_path):
+    """`mousepods on|off <feature>` and `mousepods status` (see features.py). Returns the exit code."""
+    import features
+    if isinstance(cmd, features.Invalid):
+        print(cmd.message, file=sys.stderr)
+        return 2
+    if isinstance(cmd, features.Send):
+        return send_command(cmd.command)
+    if isinstance(cmd, features.Status):
+        running = os.path.exists(CTRL_SOCK)
+        print(f"MousePods is {'running' if running else 'not running'}  (config: {cfg_path})")
+        for line in features.status_lines(load_config(cfg_path)):
+            print("  " + line)
+        return 0
+    update_config_file(cfg_path, features.config_updates(cmd))
+    state = "on" if cmd.on else "off"
+    print(f"{', '.join(cmd.names)} {state}" + ("  (a running MousePods applies it within a second)"
+                                               if os.path.exists(CTRL_SOCK) else ""))
+    return 0
+
+
 def main():
+    import features
+    cmd = features.parse(sys.argv[1:])
+    if cmd is not None:
+        sys.exit(feature_command(cmd, DEFAULT_CONFIG_PATH))
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("-c", "--config", default=DEFAULT_CONFIG_PATH, help="config file (default: config.json next to the script)")
     ap.add_argument("--diag", action="store_true", help="show live rates and angles, no cursor control")

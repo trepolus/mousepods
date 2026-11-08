@@ -24,7 +24,7 @@ build-backend = "setuptools.build_meta"
 [tool.setuptools]
 packages = ["desktop", "garmin"]
 py-modules = [
-    "airpods_mouse_controller", "bluez_dbus", "bridge_install", "calibration", "game_bridge",
+    "airpods_mouse_controller", "bluez_dbus", "bridge_install", "calibration", "features", "game_bridge",
     "game_profiles", "games_service", "gestures", "i18n", "l2cap", "labo", "macos_motion", "macos_pointer",
     "mousepods_web", "opentrack_out", "paths", "silent_speech", "sim_joystick", "steam_games",
 ]
