@@ -172,6 +172,10 @@ GUIDED_ROUTINE = (
     ("hold still", 4),
     ("tilt ear to left shoulder, then right, twice", 8),
     ("hold still", 4),
+    ("quick tilt to the right and back, 3 times (click gesture)", 6),
+    ("hold still", 3),
+    ("quick tilt to the left and back, 3 times (click gesture)", 6),
+    ("hold still", 3),
 )
 
 
@@ -218,7 +222,7 @@ def main(argv=None):
         prog="python -m macos_motion",
         description="macOS CoreMotion motion source tools. Needs the helper app built with macos/build.sh.")
     sub = ap.add_subparsers(dest="command", required=True)
-    rec = sub.add_parser("record", help="guided ~44 s capture of the raw CoreMotion stream to a JSON file")
+    rec = sub.add_parser("record", help="guided ~62 s capture of the raw CoreMotion stream to a JSON file")
     rec.add_argument("path", nargs="?", default=os.path.join(
         HERE, "captures", "private", time.strftime("coremotion_guided_%Y%m%d_%H%M%S.json")),
         help="output file (default: captures/private/coremotion_guided_<time>.json)")

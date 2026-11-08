@@ -191,6 +191,53 @@ class CoreMotionReplayTests(unittest.TestCase):
             self.assertLess(max(self.rms(name)), 12, name)
 
 
+def replay_through_controller(**cfg_over):
+    """Feed the guided capture through a real Controller (mouse on, fake pointer); clicks per cue."""
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    from test_engine import FakePointer
+    cfg = m.load_config("/nonexistent.json")
+    cfg.update(notifications=False, mouse_paused=False, **cfg_over)
+    ptr = FakePointer()
+    ctl = m.Controller(cfg, ptr)
+    ctl.set_device(mm.DEVICE_ID)
+    ctl.set_place("ear")
+    with open(CAPTURE) as f:
+        capture = json.load(f)
+    clicks = {cue: [] for cue, _ in capture["routine"]}
+    for event in capture["events"]:
+        sample = mm.parse_datagram(json.dumps(event["msg"]).encode())
+        if not isinstance(sample, mm.MotionSample):
+            continue
+        e = mm.to_engine(sample)
+        now = event["t_recv"] + 100.0
+        before = len(ptr.clicks)
+        ctl.on_sample(e.ts_ns, e.w_dps, e.g, e.a_ms2, e.att_q15, now)
+        ctl.render(now)
+        clicks[capture["routine"][event["cue"]][0]].extend(ptr.clicks[before:])
+    return clicks
+
+
+class CoreMotionClickReplayTests(unittest.TestCase):
+    """Repo click features on the 25 Hz CoreMotion stream, replayed from the guided capture."""
+
+    def test_head_tilt_click_never_fires_while_turning_nodding_or_still(self):
+        # The capture's tilts are slow (about 1 s each), not the quick click gesture, so clicks there
+        # are allowed but not required. A capture with quick tilts can prove the positive case.
+        clicks = replay_through_controller(roll_click={**m.DEFAULTS["roll_click"], "enabled": True})
+        clicks.pop("tilt ear to left shoulder, then right, twice")
+        self.assertEqual({cue: c for cue, c in clicks.items() if c}, {})
+
+    def test_dwell_click_fires_once_per_pause_after_moving(self):
+        clicks = replay_through_controller(dwell_click={**m.DEFAULTS["dwell_click"], "enabled": True})
+        # Three "hold still" phases follow a movement (turn, nod, tilt); the first one follows nothing.
+        self.assertEqual(clicks.pop("hold still"), ["left", "left", "left"])
+        self.assertEqual({cue: c for cue, c in clicks.items() if c}, {}, "no clicks while moving")
+
+    def test_no_clicks_when_click_features_are_off(self):
+        clicks = replay_through_controller()
+        self.assertEqual({cue: c for cue, c in clicks.items() if c}, {})
+
+
 class GuidedRecordTests(unittest.TestCase):
     def test_capture_tags_each_datagram_with_its_cue(self):
         app_dir = tempfile.mkdtemp()
