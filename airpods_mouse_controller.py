@@ -1740,13 +1740,19 @@ def run_macos(ctl, web, ctrl, cfg):
     """macOS loop: samples come from CoreMotion through the helper app (macos_motion), not from L2CAP."""
     import macos_motion
     source = macos_motion.MacMotionSource()
+    claimed = False
     try:
-        source.start()
+        try:
+            source.start()
+        except FileNotFoundError as e:
+            log.error("%s", e)
+            return
         log.info("macOS: CoreMotion helper started (UDP 127.0.0.1:%d)", source.port)
         ctl.set_device(macos_motion.DEVICE_ID)
         frame = 1.0 / max(int(cfg["render_hz"]), 10)
         next_frame = time.monotonic()
         next_reload = time.monotonic() + 1.0
+        now_playing = macos_motion.NowPlayingSync()
         RECEIVING = "receiving"
         last_status = None
         warned_silent = False
@@ -1768,6 +1774,13 @@ def run_macos(ctl, web, ctrl, cfg):
                 elif isinstance(event, macos_motion.HotkeyCommand):
                     log.info("Shortcut: %s", event.value)
                     ctl.command(event.value)
+                elif isinstance(event, macos_motion.StemPress):
+                    st = cfg["stem"]
+                    action = st.get(event.value, "none")
+                    log.info("Stem press: %s -> %s", event.value, action)
+                    if st["enabled"] and not ctl.diag and (
+                            action in ("toggle_pause", "toggle", "recenter") or not ctl.paused):
+                        ctl.command(action)
                 elif isinstance(event, macos_motion.HeadphoneStatus) and event != last_status:
                     last_status = event
                     text = MAC_STATUS_TEXT[event.value]
@@ -1787,10 +1800,21 @@ def run_macos(ctl, web, ctrl, cfg):
             if now >= next_frame:
                 ctl.render(now)
                 next_frame = now + frame
+            # Stem presses only reach the Now Playing app: claim it only while the mouse is active, so
+            # play/pause goes back to Music or Spotify as soon as mouse control is paused.
+            want = bool(cfg["stem"]["enabled"]) and not ctl.diag and not ctl.paused
+            claim = now_playing.update(want, now)
+            if claim is not None and source.send_control(now_playing=claim):
+                if claim != claimed:
+                    log.info("Stem presses %s (Now Playing %s)", "on" if claim else "off",
+                             "claimed" if claim else "released")
+                    claimed = claim
             if now >= next_reload:
                 next_reload = now + 1.0
                 ctl.maybe_reload()
     finally:
+        if claimed:
+            source.send_control(now_playing=False)
         source.close()
 
 

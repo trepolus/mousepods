@@ -13,7 +13,7 @@ let package = Package(
         .executableTarget(
             name: "mousepods-motion",
             dependencies: ["MotionWire"],
-            linkerSettings: [.linkedFramework("CoreMotion"), .linkedFramework("Carbon"), .linkedFramework("AppKit")]
+            linkerSettings: [.linkedFramework("CoreMotion"), .linkedFramework("Carbon"), .linkedFramework("AppKit"), .linkedFramework("MediaPlayer")]
         ),
         .testTarget(name: "MotionWireTests", dependencies: ["MotionWire"]),
     ]

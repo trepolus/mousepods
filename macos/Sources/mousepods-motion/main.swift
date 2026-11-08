@@ -7,10 +7,11 @@ import Carbon.HIToolbox
 import CoreMotion
 import Darwin
 import Foundation
+import MediaPlayer
 import MotionWire
 
 final class UDPSender: @unchecked Sendable {
-    private let fd: Int32
+    let fd: Int32
     private var address: sockaddr_in
 
     init?(port: UInt16) {
@@ -32,6 +33,63 @@ final class UDPSender: @unchecked Sendable {
                     _ = sendto(fd, bytes.baseAddress, bytes.count, 0, addr, socklen_t(MemoryLayout<sockaddr_in>.size))
                 }
             }
+        }
+    }
+}
+
+/// Reads controller messages that arrive on the sender's own socket (the controller replies to our address).
+final class ControlListener: @unchecked Sendable {
+    private let source: DispatchSourceRead
+
+    init(fd: Int32, onControl: @escaping @Sendable (HelperControl) -> Void) {
+        source = DispatchSource.makeReadSource(fileDescriptor: fd, queue: .main)
+        source.setEventHandler {
+            var buffer = [UInt8](repeating: 0, count: 2048)
+            let count = recv(fd, &buffer, buffer.count, 0)
+            guard count > 0, let control = HelperControl.parse(Data(buffer[0..<count])) else { return }
+            onControl(control)
+        }
+        source.resume()
+    }
+}
+
+/// Holds the Now Playing role while the controller asks for it, so AirPods stem presses reach us.
+/// macOS delivers a single press as play/pause, a double press as next track, a triple as previous.
+final class NowPlaying: @unchecked Sendable {
+    let sender: UDPSender
+    private var targets: [(MPRemoteCommand, Any)] = []
+
+    init(sender: UDPSender) {
+        self.sender = sender
+    }
+
+    func set(_ claim: Bool) {
+        if claim == !targets.isEmpty { return }
+        let center = MPRemoteCommandCenter.shared()
+        let info = MPNowPlayingInfoCenter.default()
+        if claim {
+            let presses: [(MPRemoteCommand, StemPress)] = [
+                (center.togglePlayPauseCommand, .single), (center.playCommand, .single),
+                (center.pauseCommand, .single), (center.nextTrackCommand, .double),
+                (center.previousTrackCommand, .triple),
+            ]
+            for (command, press) in presses {
+                let sender = self.sender
+                let token = command.addTarget { _ in
+                    sender.send(.stem(press))
+                    return .success
+                }
+                targets.append((command, token))
+            }
+            info.nowPlayingInfo = [MPMediaItemPropertyTitle: "MousePods mouse control"]
+            info.playbackState = .playing
+        } else {
+            for (command, token) in targets {
+                command.removeTarget(token)
+            }
+            targets.removeAll()
+            info.playbackState = .stopped
+            info.nowPlayingInfo = nil
         }
     }
 }
@@ -179,6 +237,14 @@ RunLoop.main.add(watchdog, forMode: .common)
 let hotkeys = HotkeyRegistry(sender: sender, hotkeys: defaultHotkeys)
 for hotkey in hotkeys.register() {
     FileHandle.standardError.write(Data("mousepods-motion: shortcut for \(hotkey.command.rawValue) is taken\n".utf8))
+}
+
+let nowPlaying = NowPlaying(sender: sender)
+let control = ControlListener(fd: sender.fd) { message in
+    switch message {
+    case .nowPlaying(let claim):
+        MainActor.assumeIsolated { nowPlaying.set(claim) }   // listener runs on the main queue
+    }
 }
 
 // An accessory NSApplication (no Dock icon, no menu bar) so Carbon delivers hot key events.

@@ -10,6 +10,9 @@ Wire format (frozen, mirrored by macos/Sources/MotionWire):
   {"type": "sample", "t": s, "rate": [rad/s]*3, "gravity": [g]*3, "accel": [g]*3, "quat": [w, x, y, z]}
   {"type": "status", "status": "connected" | "disconnected" | "unavailable" | "denied"}
   {"type": "command", "command": "recenter" | "toggle" | "scroll" | "mode"}   (global shortcuts)
+  {"type": "stem", "press": "single" | "double" | "triple"}
+Controller to helper (sent to the helper's own address):
+  {"type": "control", "now_playing": true | false}   claim or release the Now Playing role (stem presses)
 """
 import enum
 import json
@@ -45,6 +48,13 @@ class HotkeyCommand(enum.Enum):
     MODE = "mode"
 
 
+class StemPress(enum.Enum):
+    """AirPods stem presses, received while the helper holds the Now Playing role; keys of cfg["stem"]."""
+    SINGLE = "single"
+    DOUBLE = "double"
+    TRIPLE = "triple"
+
+
 @dataclass(frozen=True)
 class MotionSample:
     """One CoreMotion reading in CoreMotion units (seconds, rad/s, g, unit quaternion w, x, y, z)."""
@@ -74,7 +84,7 @@ def _vector(value, size):
 
 
 def parse_datagram(data):
-    """Datagram bytes -> MotionSample | HeadphoneStatus | HotkeyCommand, or None if malformed or unknown."""
+    """Datagram bytes -> MotionSample | HeadphoneStatus | HotkeyCommand | StemPress, or None if unknown."""
     try:
         obj = json.loads(data)
     except (ValueError, UnicodeDecodeError):
@@ -90,6 +100,11 @@ def parse_datagram(data):
     if kind == "command":
         try:
             return HotkeyCommand(obj.get("command"))
+        except ValueError:
+            return None
+    if kind == "stem":
+        try:
+            return StemPress(obj.get("press"))
         except ValueError:
             return None
     if kind == "sample":
@@ -127,6 +142,22 @@ def to_engine(sample):
     )
 
 
+class NowPlayingSync:
+    """Decides when to tell the helper to claim or release Now Playing: on every change, and again
+    every refresh_s so a restarted helper or a lost datagram catches up. Returns the flag to send or None."""
+
+    def __init__(self, refresh_s=2.0):
+        self.refresh_s = refresh_s
+        self._sent = None
+        self._sent_at = None
+
+    def update(self, want, now):
+        if want == self._sent and now - self._sent_at < self.refresh_s:
+            return None
+        self._sent, self._sent_at = want, now
+        return want
+
+
 class MacMotionSource:
     """Owns the UDP socket and the helper app. `sock` is select()-able; read with `receive()`.
 
@@ -140,6 +171,7 @@ class MacMotionSource:
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.sock.bind(("127.0.0.1", 0))
         self.port = self.sock.getsockname()[1]
+        self.helper_address = None
 
     def launch_command(self):
         # -g: do not bring it to the front, -n: a fresh instance with our arguments
@@ -154,9 +186,18 @@ class MacMotionSource:
         self._launcher(self.launch_command(), check=True)
 
     def receive(self):
-        """Read one datagram: MotionSample | HeadphoneStatus | HotkeyCommand | None (malformed, dropped)."""
-        data = self.sock.recv(4096)
+        """Read one datagram: MotionSample | HeadphoneStatus | HotkeyCommand | StemPress | None (dropped)."""
+        data, address = self.sock.recvfrom(4096)
+        self.helper_address = address
         return parse_datagram(data)
+
+    def send_control(self, now_playing):
+        """Tell the helper to claim or release Now Playing. False when no helper has been heard yet."""
+        if self.helper_address is None:
+            return False
+        message = json.dumps({"type": "control", "now_playing": bool(now_playing)}).encode()
+        self.sock.sendto(message, self.helper_address)
+        return True
 
     def close(self):
         self.sock.close()

@@ -98,3 +98,32 @@ struct HotkeyTests {
         #expect(defaultHotkeys.allSatisfy { $0.modifiers == CarbonModifier.control | CarbonModifier.option })
     }
 }
+
+@Suite("Stem presses and controller messages")
+struct StemTests {
+    @Test("stem press uses its wire name", arguments: StemPress.allCases)
+    func stemWire(press: StemPress) throws {
+        let json = try decode(encodeLine(.stem(press)))
+        #expect(json["type"] as? String == "stem")
+        #expect(json["press"] as? String == press.rawValue)
+    }
+
+    @Test("controller can claim and release Now Playing", arguments: [
+        ("{\"type\":\"control\",\"now_playing\":true}", HelperControl?.some(.nowPlaying(true))),
+        ("{\"type\":\"control\",\"now_playing\":false}", HelperControl?.some(.nowPlaying(false))),
+    ] as [(String, HelperControl?)])
+    func controlParses(text: String, want: HelperControl?) {
+        #expect(HelperControl.parse(Data(text.utf8)) == want)
+    }
+
+    @Test("anything else from the controller is ignored", arguments: [
+        "{\"type\":\"control\",\"now_playing\":1}",
+        "{\"type\":\"control\"}",
+        "{\"type\":\"status\",\"now_playing\":true}",
+        "[true]",
+        "nope",
+    ] as [String])
+    func controlRejects(text: String) {
+        #expect(HelperControl.parse(Data(text.utf8)) == nil)
+    }
+}

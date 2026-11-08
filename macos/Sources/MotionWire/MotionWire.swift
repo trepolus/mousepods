@@ -70,10 +70,34 @@ public enum HotkeyCommand: String, Sendable, CaseIterable {
     case mode
 }
 
+/// AirPods stem presses as macOS delivers them to the Now Playing app (play/pause, next, previous).
+public enum StemPress: String, Sendable, CaseIterable {
+    case single
+    case double
+    case triple
+}
+
 public enum HelperEvent: Equatable, Sendable {
     case sample(MotionSample)
     case status(HeadphoneStatus)
     case command(HotkeyCommand)
+    case stem(StemPress)
+}
+
+/// Messages from the controller back to the helper, sent to the helper's own UDP address.
+public enum HelperControl: Equatable, Sendable {
+    /// Claim (true) or release (false) the Now Playing role that receives stem presses.
+    case nowPlaying(Bool)
+
+    /// Parses `{"type": "control", "now_playing": true|false}`; nil for anything else.
+    public static func parse(_ data: Data) -> HelperControl? {
+        guard let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              object["type"] as? String == "control",
+              let flag = object["now_playing"] as? NSNumber,
+              CFGetTypeID(flag) == CFBooleanGetTypeID()
+        else { return nil }
+        return .nowPlaying(flag.boolValue)
+    }
 }
 
 /// Frozen wire DTOs: field names are the contract with macos_motion.py.
@@ -96,6 +120,11 @@ private struct CommandDTO: Encodable {
     let command: String
 }
 
+private struct StemDTO: Encodable {
+    let type = "stem"
+    let press: String
+}
+
 private extension Vector3 {
     var wire: [Double] { [x, y, z] }
 }
@@ -114,5 +143,7 @@ public func encodeLine(_ event: HelperEvent) -> Data {
         return try! encoder.encode(StatusDTO(status: status.rawValue))
     case .command(let command):
         return try! encoder.encode(CommandDTO(command: command.rawValue))
+    case .stem(let press):
+        return try! encoder.encode(StemDTO(press: press.rawValue))
     }
 }

@@ -44,6 +44,13 @@ class ParseDatagramTests(unittest.TestCase):
         accepted = {cmd for _, _, _, cmd in m.HOTKEYS}
         self.assertEqual({c.value for c in mm.HotkeyCommand}, accepted)
 
+    def test_stem_presses_are_understood(self):
+        for name in ("single", "double", "triple"):
+            self.assertEqual(mm.parse_datagram(wire({"type": "stem", "press": name})), mm.StemPress(name), name)
+
+    def test_stem_presses_match_the_stem_config(self):
+        self.assertLessEqual({p.value for p in mm.StemPress}, set(m.DEFAULTS["stem"]))
+
     def test_malformed_datagrams_are_dropped(self):
         cases = {
             "not json": b"{nope",
@@ -52,6 +59,7 @@ class ParseDatagramTests(unittest.TestCase):
             "unknown type": wire({"type": "battery"}),
             "unknown status": wire({"type": "status", "status": "sleeping"}),
             "unknown command": wire({"type": "command", "command": "quit"}),
+            "unknown stem press": wire({"type": "stem", "press": "long"}),
             "missing gravity": wire({k: v for k, v in SAMPLE.items() if k != "gravity"}),
             "short rate": wire(with_field(rate=[1.0, 2.0])),
             "three-part quaternion": wire(with_field(quat=[1.0, 0.0, 0.0])),
@@ -98,6 +106,21 @@ class EngineUnitsTests(unittest.TestCase):
                 self.assertAlmostEqual(g, w, places=3, msg=name)
 
 
+class NowPlayingSyncTests(unittest.TestCase):
+    def test_claim_follows_mouse_state_and_is_refreshed(self):
+        sync = mm.NowPlayingSync(refresh_s=2.0)
+        steps = [
+            ("first state is always sent", True, 0.0, True),
+            ("unchanged within refresh is quiet", True, 1.0, None),
+            ("pause releases at once", False, 1.5, False),
+            ("unchanged release is quiet", False, 3.0, None),
+            ("release is repeated after refresh", False, 3.6, False),
+            ("resume claims at once", True, 3.7, True),
+        ]
+        for name, want, now, expected in steps:
+            self.assertEqual(sync.update(want, now), expected, name)
+
+
 class MacMotionSourceTests(unittest.TestCase):
     def setUp(self):
         self.app_dir = tempfile.mkdtemp()
@@ -126,6 +149,16 @@ class MacMotionSourceTests(unittest.TestCase):
                 source.start()
         finally:
             source.close()
+
+    def test_control_reply_goes_to_the_helper_address(self):
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as helper:
+            helper.bind(("127.0.0.1", 0))
+            helper.settimeout(2)
+            self.assertFalse(self.source.send_control(now_playing=True), "no helper heard yet")
+            helper.sendto(wire({"type": "status", "status": "connected"}), ("127.0.0.1", self.source.port))
+            self.source.receive()
+            self.assertTrue(self.source.send_control(now_playing=True))
+            self.assertEqual(json.loads(helper.recv(512)), {"type": "control", "now_playing": True})
 
     def test_samples_and_status_arrive_over_udp(self):
         self.send_from_helper(wire({"type": "status", "status": "connected"}))
