@@ -11,6 +11,7 @@ import ctypes
 import ctypes.util
 import logging
 import time
+from typing import NamedTuple
 
 log = logging.getLogger(__name__)
 
@@ -56,6 +57,11 @@ def bounding_box(displays):
     return (left, top, right - left, bottom - top)
 
 
+class RelativeMove(NamedTuple):
+    point: tuple       # where the cursor goes (kept on a display)
+    delta: tuple       # the intended move, unclamped: what pointer-lock apps read as movementX/Y
+
+
 class CursorMath:
     """Turns move_rel / move_abs calls into whole-pixel cursor positions, or None when nothing moves."""
 
@@ -72,7 +78,7 @@ class CursorMath:
         if not (ix or iy):
             return None
         self._last_abs = None
-        return keep_on_displays((current[0] + ix, current[1] + iy), current, displays)
+        return RelativeMove(keep_on_displays((current[0] + ix, current[1] + iy), current, displays), (ix, iy))
 
     def absolute(self, fx, fy, displays):
         """fx, fy in 0..1 across one canvas spanning all displays (as uinput does on Linux)."""
@@ -138,6 +144,7 @@ MOUSE_MOVED = 5
 BUTTON_EVENTS = {"left": (1, 2, 0), "right": (3, 4, 1), "middle": (25, 26, 2)}   # down, up, CGMouseButton
 DRAG_EVENTS = {"left": 6, "right": 7, "middle": 27}          # moves while that button is held
 HID_EVENT_TAP = 0
+DELTA_X_FIELD, DELTA_Y_FIELD = 4, 5      # kCGMouseEventDeltaX / DeltaY: movementX/Y under pointer lock
 SCROLL_UNIT_LINE = 1
 
 
@@ -158,6 +165,8 @@ class CoreGraphics:
                                                       ctypes.c_int32, ctypes.c_int32, ctypes.c_int32]
         cg.CGEventCreateScrollWheelEvent2.restype = vp
         cg.CGEventPost.argtypes, cg.CGEventPost.restype = [ctypes.c_uint32, vp], None
+        cg.CGEventSetIntegerValueField.argtypes = [vp, ctypes.c_uint32, ctypes.c_int64]
+        cg.CGEventSetIntegerValueField.restype = None
         cg.CGGetActiveDisplayList.argtypes = [ctypes.c_uint32, ctypes.POINTER(ctypes.c_uint32),
                                               ctypes.POINTER(ctypes.c_uint32)]
         cg.CGGetActiveDisplayList.restype = ctypes.c_int32
@@ -194,16 +203,24 @@ class CoreGraphics:
         self.cg.CGEventPost(HID_EVENT_TAP, event)
         self.cf.CFRelease(event)
 
-    def move(self, point):
-        self._post(self.cg.CGEventCreateMouseEvent(None, MOUSE_MOVED, CGPoint(*point), 0))
+    def _with_delta(self, event, delta):
+        # Games and browsers under pointer lock read the delta, not the position.
+        self.cg.CGEventSetIntegerValueField(event, DELTA_X_FIELD, int(delta[0]))
+        self.cg.CGEventSetIntegerValueField(event, DELTA_Y_FIELD, int(delta[1]))
+        return event
+
+    def move(self, point, delta=(0, 0)):
+        event = self.cg.CGEventCreateMouseEvent(None, MOUSE_MOVED, CGPoint(*point), 0)
+        self._post(self._with_delta(event, delta))
 
     def button(self, button, down, point):
         down_type, up_type, number = BUTTON_EVENTS[button]
         self._post(self.cg.CGEventCreateMouseEvent(None, down_type if down else up_type, CGPoint(*point), number))
 
-    def drag(self, point, button):
+    def drag(self, point, button, delta=(0, 0)):
         number = BUTTON_EVENTS[button][2]
-        self._post(self.cg.CGEventCreateMouseEvent(None, DRAG_EVENTS[button], CGPoint(*point), number))
+        event = self.cg.CGEventCreateMouseEvent(None, DRAG_EVENTS[button], CGPoint(*point), number)
+        self._post(self._with_delta(event, delta))
 
     def scroll(self, lines):
         self._post(self.cg.CGEventCreateScrollWheelEvent2(None, SCROLL_UNIT_LINE, 1, lines, 0, 0))
@@ -240,27 +257,28 @@ class MacPointer:
 
     HELD_S = 0.05     # a gap longer than this means the cursor rested where it was
 
-    def _moved(self, before, point):
+    def _moved(self, before, point, delta):
         now = self._clock()
         last = self._history.last_time
         if last is None or now - last > self.HELD_S:
             self._history.record(now - 0.001, before)      # where it rested until now
         if self._held:
-            self.cg.drag(point, self._held[0])          # apps only see a drag with drag events
+            self.cg.drag(point, self._held[0], delta)   # apps only see a drag with drag events
         else:
-            self.cg.move(point)
+            self.cg.move(point, delta)
         self._history.record(now, point)
 
     def move_rel(self, dx, dy):
         current = self.cg.cursor()
-        point = self._math.relative(current, dx, dy, self.displays())
-        if point is not None:
-            self._moved(current, point)
+        move = self._math.relative(current, dx, dy, self.displays())
+        if move is not None:
+            self._moved(current, move.point, move.delta)
 
     def move_abs(self, fx, fy):
         point = self._math.absolute(fx, fy, self.displays())
         if point is not None:
-            self._moved(self.cg.cursor(), point)
+            current = self.cg.cursor()
+            self._moved(current, point, (point[0] - current[0], point[1] - current[1]))
 
     def click(self, button="left", rewind_s=0.0):
         """Click at the cursor, or where it was rewind_s seconds ago (a stem press jolts the head)."""

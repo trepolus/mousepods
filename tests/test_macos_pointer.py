@@ -45,8 +45,13 @@ class CursorMathTests(unittest.TestCase):
     def test_small_moves_add_up_to_whole_pixels(self):
         math = mp.CursorMath()
         steps = [math.relative((100, 100), 0.4, -0.3, [LAPTOP]) for _ in range(3)]
-        self.assertEqual(steps, [None, None, (101, 100)])
-        self.assertEqual(math.relative((101, 100), 0.0, -0.2, [LAPTOP]), (101, 99))
+        self.assertEqual(steps, [None, None, mp.RelativeMove((101, 100), (1, 0))])
+        self.assertEqual(math.relative((101, 100), 0.0, -0.2, [LAPTOP]), mp.RelativeMove((101, 99), (0, -1)))
+
+    def test_delta_is_the_intended_move_even_at_the_screen_edge(self):
+        # Games under pointer lock keep turning although the hidden cursor cannot go further.
+        move = mp.CursorMath().relative((1511, 500), 30, 0, [LAPTOP])
+        self.assertEqual(move, mp.RelativeMove((1511, 500), (30, 0)))
 
     def test_absolute_spans_all_displays_as_one_canvas(self):
         # Canvas = bounding box of laptop + monitor: x 0..3431, y -98..981.
@@ -116,15 +121,19 @@ class FakeCoreGraphics:
     def displays(self):
         return list(self.screens)
 
-    def move(self, point):
+    deltas = None
+
+    def move(self, point, delta=(0, 0)):
         self.calls.append(("move", point))
+        self.deltas = (self.deltas or []) + [delta]
         self.position = point
 
     def button(self, button, down, point):
         self.calls.append(("button", button, down, point))
 
-    def drag(self, point, button):
+    def drag(self, point, button, delta=(0, 0)):
         self.calls.append(("drag", button, point))
+        self.deltas = (self.deltas or []) + [delta]
         self.position = point
 
     def scroll(self, lines):
@@ -183,6 +192,21 @@ class MacPointerTests(unittest.TestCase):
         p.release_all()
         p.release_all()
         self.assertEqual(cg.calls, [("button", "left", True, (1, 1)), ("button", "left", False, (1, 1))])
+
+    def test_every_move_carries_its_delta_for_pointer_lock(self):
+        cg = FakeCoreGraphics(cursor=(300, 200))
+        p = mp.MacPointer(backend=cg, sleep=lambda s: None, clock=lambda: 1.0)
+        p.move_rel(5, -3)
+        cg.position = (300, 200)             # pointer lock: the hidden cursor stays where it is
+        p.move_rel(4, 0)
+        p.press("left")
+        p.move_rel(0, 2)
+        self.assertEqual(cg.deltas, [(5, -3), (4, 0), (0, 2)])
+
+    def test_pointer_mode_delta_is_the_jump(self):
+        cg = FakeCoreGraphics(cursor=(100, 100))
+        mp.MacPointer(backend=cg, sleep=lambda s: None, clock=lambda: 1.0).move_abs(0.0, 0.0)
+        self.assertEqual(cg.deltas, [(-100, -100)])
 
     def test_click_presses_and_releases_where_the_cursor_is(self):
         cg = FakeCoreGraphics(cursor=(42, 24))
